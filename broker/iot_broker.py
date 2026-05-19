@@ -6,7 +6,7 @@ TCP: CONNECT/CONNACK, PUBLISH (QoS 0/1), SUBSCRIBE/SUBACK,
 UDP: PUBLISH QoS 0 (sensores — fire and forget, sem handshake).
 
 Ambos escutam na mesma porta (BROKER_PORT). TCP e UDP coexistem
-na mesma porta pois são protocolos distintos no SO.
+na mesma porta.
 
 Wildcards: + (um nível) e # (zero ou mais níveis).
 Mensagens retained: última mensagem por tópico, entregue a novos subscribers.
@@ -18,8 +18,8 @@ import logging
 import os
 from collections import defaultdict
 
-HOST       = "0.0.0.0"
-PORT       = int(os.environ.get("BROKER_PORT", "1883"))
+HOST       = "0.0.0.0" #Escuta habilitada para todas as interfaces de rede disponíveis
+PORT       = int(os.environ.get("BROKER_PORT", "1883")) #Porta 1883 para MQTT, pode ser configurada via variável de ambiente
 MAX_LISTEN = 500
 
 logging.basicConfig(
@@ -29,16 +29,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("broker")
 
-_lock     = threading.Lock()
-_clients  = {}               # client_id -> {"sock": socket, "subs": set[str]}
-_subs     = defaultdict(set) # topic_pattern -> set[client_id]
-_retained = {}               # topic -> payload bytes
+_lock     = threading.Lock() #Como o servidor cria uma thread para cada cliente, o lock impede que duas threads modifiquem os dicionários globais ao mesmo tempo
+_clients  = {}               #Client_id -> {"sock": socket, "subs": set[str]} (ID DO CLIENTE PARA SOCKET E LISTA DE INSCRIÇÕES)
+_subs     = defaultdict(set) #Dicionário que relaciona um tópico a um conjunto de IDS DE clientes
+_retained = {}               # topic -> payload bytes (última mensagem retida por tópico)
 
 
-# ---------------------------------------------------------------------------
-# Codec MQTT (remaining length)
-# ---------------------------------------------------------------------------
-
+#Codificador MQTT para o campo "remaining length" 
 def _enc_rem(n: int) -> bytes:
     out = bytearray()
     while True:
@@ -51,7 +48,7 @@ def _enc_rem(n: int) -> bytes:
             break
     return bytes(out)
 
-
+#Decodificador MQTT para o campo "remaining length" 
 def _dec_rem(sock: socket.socket):
     mult, val = 1, 0
     for _ in range(4):
@@ -65,7 +62,7 @@ def _dec_rem(sock: socket.socket):
         mult <<= 7
     return None
 
-
+#Garante que o sistema ficará em loop até receber exatamente n bytes do socket, ou retorna None se a conexão for fechada antes disso    
 def _read_exact(sock: socket.socket, n: int):
     buf = b""
     while len(buf) < n:
@@ -76,10 +73,11 @@ def _read_exact(sock: socket.socket, n: int):
     return buf
 
 
-# ---------------------------------------------------------------------------
-# Topic wildcard matching
-# ---------------------------------------------------------------------------
-
+#Implementação do algoritmo de correspondência de tópicos MQTT, considerando os curingas "+" e "#". 
+#O padrão é dividido em partes usando "/" como separador, e a função recursiva "match" compara cada 
+#parte do padrão com a parte correspondente do tópico. O curinga "+" corresponde a exatamente um nível, 
+#enquanto o curinga "#" corresponde a zero ou mais níveis. Se o padrão corresponder ao tópico, a função 
+#retorna True; caso contrário, retorna False
 def _topic_matches(pattern: str, topic: str) -> bool:
     if pattern == topic:
         return True
@@ -98,10 +96,9 @@ def _topic_matches(pattern: str, topic: str) -> bool:
     return match(pattern.split("/"), topic.split("/"))
 
 
-# ---------------------------------------------------------------------------
-# Message routing
-# ---------------------------------------------------------------------------
-
+#Função invocada quando o dispositivo publica um dado. Ela vasculha as assinaturas ativas, encontra
+#os socketes dos clientes interessados, monta o pacote MQTT e envia os bytes. O dispositivo de origem
+#não recebe de volta a mensagem que acabou de enviar
 def _route(topic: str, payload: bytes, src_id: str):
     """Forward published message to all matching subscribers (except source)."""
     with _lock:
@@ -123,10 +120,7 @@ def _route(topic: str, payload: bytes, src_id: str):
             log.warning(f"Route to {cid} failed: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Client handler
-# ---------------------------------------------------------------------------
-
+#Realiza a leitura do cabeçalho MQTT e realiza as ações correspondentes para cada tipo de pacote!
 def _handle(sock: socket.socket, addr):
     cid = None
     try:
@@ -143,7 +137,7 @@ def _handle(sock: socket.socket, addr):
             if data is None:
                 break
 
-            # ── CONNECT ───────────────────────────────────────────────────
+            #CONNECT 
             if ptype == 1:
                 proto_len = (data[0] << 8) | data[1]
                 offset    = 2 + proto_len + 4  # skip name + level + flags + keepalive
@@ -159,7 +153,7 @@ def _handle(sock: socket.socket, addr):
                 sock.sendall(bytes([0x20, 0x02, 0x00, 0x00]))
                 log.info(f"CONNECT  {cid}  {addr}")
 
-            # ── PUBLISH ───────────────────────────────────────────────────
+            #PUBLISH ─
             elif ptype == 3:
                 retain  = flags & 0x01
                 qos     = (flags >> 1) & 0x03
@@ -178,7 +172,7 @@ def _handle(sock: socket.socket, addr):
                 log.debug(f"PUBLISH  {cid} → {topic}  ({len(payload)} B)")
                 _route(topic, payload, cid)
 
-            # ── SUBSCRIBE ─────────────────────────────────────────────────
+            #SUBSCRIBE
             elif ptype == 8:
                 mid     = (data[0] << 8) | data[1]
                 off     = 2
@@ -205,7 +199,7 @@ def _handle(sock: socket.socket, addr):
                     + bytes(granted)
                 )
 
-            # ── UNSUBSCRIBE ───────────────────────────────────────────────
+            #UNSUBSCRIBE 
             elif ptype == 10:
                 mid = (data[0] << 8) | data[1]
                 off = 2
@@ -219,18 +213,18 @@ def _handle(sock: socket.socket, addr):
                     off += 2 + tlen
                 sock.sendall(bytes([0xB0, 0x02, mid >> 8, mid & 0xFF]))
 
-            # ── PINGREQ ───────────────────────────────────────────────────
+            #PINGREQ 
             elif ptype == 12:
                 sock.sendall(bytes([0xD0, 0x00]))
 
-            # ── DISCONNECT ────────────────────────────────────────────────
+            #DISCONNECT 
             elif ptype == 14:
                 break
 
     except Exception as e:
         if cid:
             log.warning(f"Error {cid}: {e}")
-    finally:
+    finally: #Garante que, ao desconectar, o socket seja fechado e o cliente limpo da memória ao sair
         if cid:
             with _lock:
                 if cid in _clients:
@@ -295,10 +289,9 @@ def _udp_listener():
             log.warning(f"UDP erro: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
+#Ponto de entrada! Iniciamos o servidor UDP rodando eternamente em segundo plano. Esta thread 
+#morrerá automaticamente se o programa principal for fechado. O sistema reserva a porta 1883 e
+#a configura para enfileirar até 500 conexões TCP
 def main():
     threading.Thread(target=_udp_listener, daemon=True).start()
 

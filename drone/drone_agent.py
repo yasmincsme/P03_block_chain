@@ -22,7 +22,7 @@ BROKER_HOST   = os.environ.get("BROKER_HOST", "localhost")
 BROKER_PORT   = int(os.environ.get("BROKER_PORT", "1883"))
 MISSION_MIN   = int(os.environ.get("MISSION_MIN", "20"))
 MISSION_MAX   = int(os.environ.get("MISSION_MAX", "60"))
-FAILURE_PROB  = float(os.environ.get("FAILURE_PROB", "0.08"))  # 8% chance de falha
+FAILURE_PROB  = float(os.environ.get("FAILURE_PROB", "0.08"))  #8% chance de falha
 STATUS_INTERVAL = int(os.environ.get("STATUS_INTERVAL", "10"))
 
 logging.basicConfig(
@@ -33,10 +33,7 @@ logging.basicConfig(
 log = logging.getLogger(DRONE_ID)
 
 
-# ---------------------------------------------------------------------------
-# Cliente MQTT
-# ---------------------------------------------------------------------------
-
+#Funcões de codificação e decodificação das mensagens MQTT, como no broker
 def _enc_rem(n):
     out = bytearray()
     while True:
@@ -73,22 +70,25 @@ def _read_exact(sock, n):
         buf += c
     return buf
 
-
+#Esta função avalia se um tópico publicado se encaixa no padrão de assinatura.
 def _topic_matches(pattern, topic):
     def m(p, t):
         if not p:
             return not t
-        if p[0] == "#":
+        if p[0] == "#": #multi level
             return True
         if not t:
             return p == ["#"]
-        if p[0] in ("+", t[0]):
+        if p[0] in ("+", t[0]): #Single level
             return m(p[1:], t[1:])
         return False
     return pattern == topic or m(pattern.split("/"), topic.split("/"))
 
-
+#Classe simples que gerencia o ciclo de vida de rede com o broker
 class MQTTClient:
+
+    #Método construtor. Inicializa o estado do cliente, as estruturas de dados para os callbacks, 
+    #identificador de mensagens, etc
     def __init__(self, host, port, client_id):
         self.host      = host
         self.port      = port
@@ -99,6 +99,8 @@ class MQTTClient:
         self._mid      = 0
         self._alive    = False
 
+    #Abre o socket TCP e envia o pacote CONNECT. Aguarda a resposta CONNACK. Se bem-sucedido, faz
+    #o spawn da thread de leitura
     def connect(self, retries=15, delay=3):
         for i in range(1, retries + 1):
             try:
@@ -191,12 +193,11 @@ class MQTTClient:
                 break
 
 
-# ---------------------------------------------------------------------------
-# Agente de Drone
-# ---------------------------------------------------------------------------
-
+#Entidade drone. Atua como uma FSM autônoma
 class DroneAgent:
 
+    #Inicializa a identidade do drone, instancia o MQTTClient, define o estado inicial como disponível
+    #e cria um lock dedicado à proteção das variáveis de estado internas do drone!
     def __init__(self):
         self.drone_id       = DRONE_ID
         self.mqtt           = MQTTClient(BROKER_HOST, BROKER_PORT, DRONE_ID)
@@ -204,18 +205,20 @@ class DroneAgent:
         self.current_mission = None
         self._lock          = threading.Lock()
 
+
     def start(self):
+        #Conecta-se ao broker
         self.mqtt.connect()
 
-        # Subscrições
+        #Assina os tópicos /dispatch e /recall 
         self.mqtt.subscribe(f"strait/drones/{self.drone_id}/dispatch", self._on_dispatch)
         self.mqtt.subscribe(f"strait/drones/{self.drone_id}/recall",   self._on_recall)
 
-        # Status inicial
+        #Inicialmente, publica status "available"
         self._publish_status("available")
         log.info(f"Drone {self.drone_id} pronto para missões")
 
-        # Loop de keep-alive: publica status periodicamente
+        #Entra em loop e publica seu status periodicamente
         while True:
             time.sleep(STATUS_INTERVAL)
             with self._lock:
@@ -223,8 +226,8 @@ class DroneAgent:
                 m  = self.current_mission
             self._publish_status(s, mission=m)
 
-    # ── Callbacks ─────────────────────────────────────────────────────────────
-
+    #Callback acionado quando o broker envia uma ordem de missão. Há troca do status para busy caso
+    #não esteja alocado para um setor e inicia uma nova thread executando _execute_mission.
     def _on_dispatch(self, topic: str, payload: bytes):
         with self._lock:
             if self.status != "available":
@@ -234,7 +237,7 @@ class DroneAgent:
                 )
                 return
             self.status          = "busy"
-            self.current_mission = None  # será definido abaixo
+            self.current_mission = None  
 
         try:
             msg      = json.loads(payload)
@@ -262,6 +265,8 @@ class DroneAgent:
             daemon=True
         ).start()
 
+    #Callback de interrupção. Se acionado, vai resetar o estado do drone para disponível e limpar
+    #a missão atual, abortando a operação
     def _on_recall(self, topic: str, payload: bytes):
         log.info("RECALL recebido, retornando à base")
         with self._lock:
@@ -269,13 +274,13 @@ class DroneAgent:
             self.current_mission = None
         self._publish_status("available")
 
-    # ── Execução de missão ────────────────────────────────────────────────────
-
+    #Roda em uma thread isolada. Simula o tempo de uma missão através do sleep. Se o drone falhar, altera o estado
+    #para offline e suspende a simulação, tentando se recuperar após um tempo.
     def _execute_mission(self, dispatch_msg: dict):
         occ_id   = dispatch_msg["occurrence_id"]
         duration = random.uniform(MISSION_MIN, MISSION_MAX)
 
-        # Determina ponto de falha aleatório (se aplicável)
+        #Determina ponto de falha aleatório (se aplicável)
         will_fail  = random.random() < FAILURE_PROB
         fail_after = random.uniform(duration * 0.2, duration * 0.8) if will_fail else None
 
@@ -300,23 +305,22 @@ class DroneAgent:
                 with self._lock:
                     self.status          = "offline"
                     self.current_mission = None
-                # Após pausa, tenta se recuperar e voltar disponível
+                #Após pausa, tenta se recuperar e voltar disponível
                 time.sleep(random.uniform(30, 60))
                 with self._lock:
                     self.status = "available"
                 self._publish_status("available")
                 log.info("Recuperado, voltando a disponível")
                 return
-
-        # Missão concluída com sucesso
+            
+        #Missão concluída com sucesso
         log.info(f"Missão {occ_id} CONCLUÍDA com sucesso")
         with self._lock:
             self.status          = "available"
             self.current_mission = None
         self._publish_status("available")
 
-    # ── Status ────────────────────────────────────────────────────────────────
-
+    #Método que monta a mensagem com a telemetria e o tempo atual
     def _publish_status(self, status: str, mission=None):
         payload = {
             "drone_id":  self.drone_id,
@@ -327,15 +331,12 @@ class DroneAgent:
         self.mqtt.publish(
             f"strait/drones/{self.drone_id}/status",
             json.dumps(payload),
-            retain=True
+            retain=True #Para que o broker guarde o último estado conhecido do drone.
         )
         log.debug(f"Status publicado: {status}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
+#Ponto de entrada
 def main():
     agent = DroneAgent()
     agent.start()
