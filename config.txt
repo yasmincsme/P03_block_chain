@@ -1,12 +1,14 @@
 docker compose up broker_1 sector_manager_1 drone_a drone_b radar_1 buoy_1
 
-docker compose up broker_2 broker_3 sector_manager_2 sector_manager_3 drone_c drone_d drone_e drone_f radar_2 buoy_2 radar_3 buoy_3 radar_4 buoy_4
+docker compose up broker_2 sector_manager_2 drone_c drone_d radar_2 buoy_2
 
-docker compose run --rm -it monitor
+docker compose up broker_3 sector_manager_3 drone_e drone_f radar_3 buoy_3 radar_4 buoy_4
 
 docker compose up broker_4
 
 docker compose up sector_manager_4
 
 docker compose up drone_g drone_h
+
+docker compose run --rm -it monitor
 
