@@ -93,49 +93,83 @@ def _topic_matches(pattern, topic):
 
 
 class MQTTClient:
+
     def __init__(self, host, port, client_id):
-        self.host      = host
-        self.port      = port
-        self.client_id = client_id
-        self._sock     = None
-        self._lock     = threading.Lock()
-        self._cbs      = {}
-        self._mid      = 0
-        self._alive    = False
+        self.host      = host                  #IP do Broker
+        self.port      = port                  #Porta do Broker
+        self.client_id = client_id             #ID do cliente MQTT
+        self._sock     = None                  #Socket para comunicação MQTT
+        self._lock     = threading.Lock()      #Evita que duas threads escrevam no socket ao mesmo tempo
+        self._cbs      = {}                    #Dicionário: tópico → lista de funções callback
+        self._mid      = 0                     #Contador de message IDs para QoS 1
+        self._alive    = False                 #Controla o loop da thread leitora
 
     def connect(self, retries=15, delay=3):
         for i in range(1, retries + 1):
             try:
                 self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                #Cria um socket TCP para se conectar ao broker MQTT
+
                 self._sock.settimeout(5)
+                #Se não conectar em 5s, lança exceção (evita travar para sempre)
+
                 self._sock.connect((self.host, self.port))
+                #Estabelece a conexão TCP com o broker
+
                 self._sock.settimeout(None)
+                #Remove o timeout — a partir daqui o socket fica em modo bloqueante normal
+
                 cid = self.client_id.encode()
-                var = (b"\x00\x04MQTT\x04\x02\x00\x3c"
-                       + bytes([len(cid) >> 8, len(cid) & 0xFF]) + cid)
+                var = (b"\x00\x04MQTT\x04\x02\x00\x3c" + bytes([len(cid) >> 8, len(cid) & 0xFF]) + cid)
+                #Monta o payload do pacote MQTT CONNECT: (protocol_name, protocol_version, connect_flags, keepalive, client_id)
+                
                 self._sock.sendall(bytes([0x10]) + _enc_rem(len(var)) + var)
+                #Envia o pacote CONNECT:
+                #0x10: tipo CONNECT, flags 0
+
                 ack = _read_exact(self._sock, 4)
+                #Lê exatamente 4 bytes — o pacote CONNACK do broker
+
                 if not ack or ack[0] != 0x20 or ack[3] != 0:
                     raise ConnectionError("CONNACK inválido")
+                # 0x20 = tipo CONNACK
+                # ack[3] == 0 significa "conexão aceita"
+                # qualquer outro valor = broker recusou
+
                 self._alive = True
                 threading.Thread(target=self._reader, daemon=True).start()
+                #Ativa a flag e sobe uma thread em background para ficar
+                #Lendo mensagens que chegam do broker continuamente
+
                 log.info(f"MQTT conectado {self.host}:{self.port} (id={self.client_id})")
-                return
+                return  #conexão bem-sucedida, sai do loop
+            
             except Exception as e:
                 log.warning(f"MQTT conexão {i}/{retries} → {self.host}:{self.port}: {e}")
                 time.sleep(delay)
+
         raise ConnectionError(f"Falha ao conectar ao broker {self.host}:{self.port}")
+        #Esgotou as tentativas, lança exceção
 
     def publish(self, topic, payload, qos=0, retain=False):
         if isinstance(payload, str):
             payload = payload.encode()
+            # converte string para bytes se necessário
+
         tb  = topic.encode()
         var = bytes([len(tb) >> 8, len(tb) & 0xFF]) + tb + payload
+        #monta o payload do PUBLISH
+
         f   = (qos << 1) | (1 if retain else 0)
+        #flags do cabeçalho
+
         pkt = bytes([0x30 | f]) + _enc_rem(len(var)) + var
+        #pacote completo
+
         with self._lock:
             try:
                 self._sock.sendall(pkt)
+                #adquire lock antes do envio para evitar conflito entre threads
             except Exception as e:
                 log.warning(f"Publish falhou {topic}: {e}")
 
@@ -143,50 +177,78 @@ class MQTTClient:
         if topic not in self._cbs:
             self._cbs[topic] = []
         self._cbs[topic].append(callback)
+        #registra a função callback localmente para ser chamada
+        #quando chegar uma mensagem nesse tópico
+
         self._mid = (self._mid % 65535) + 1
         mid = self._mid
+        #gera um message ID único (1 a 65535) para identificar este SUBSCRIBE
+
         tb  = topic.encode()
-        var = bytes([mid >> 8, mid & 0xFF, len(tb) >> 8, len(tb) & 0xFF]) + tb + b"\x00"
+        var = bytes([mid >> 8, mid & 0xFF,         #message ID em 2 bytes
+                     len(tb) >> 8, len(tb) & 0xFF  #tamanho do tópico em 2 bytes
+                     ]) + tb + b"\x00"             #tópico + QoS 0
+        
         pkt = bytes([0x82]) + _enc_rem(len(var)) + var
+        #0x82 = tipo SUBSCRIBE (0x80) com flag obrigatória (0x02)
+    
         with self._lock:
             try:
-                self._sock.sendall(pkt)
+                self._sock.sendall(pkt) #envia o pedido de assinatura ao broker
             except Exception as e:
                 log.warning(f"Subscribe falhou {topic}: {e}")
 
     def _reader(self):
-        while self._alive:
+        while self._alive:                  #roda enquanto o cliente estiver ativo
             try:
-                hdr = self._sock.recv(1)
+                hdr = self._sock.recv(1)    #lê 1 byte (o cabeçalho do próximo pacote)
                 if not hdr:
-                    break
-                ptype = (hdr[0] >> 4) & 0x0F
+                    break                   #broker fechou a conexão
+
+                ptype = (hdr[0] >> 4) & 0x0F    
+                #tipo do pacote (bits 7-4)
+
                 flags = hdr[0] & 0x0F
+                #flags (bits 3-0)
+
                 rem   = _dec_rem(self._sock)
+                #lê o "remaining length" (tamanho do resto)
+
                 if rem is None:
                     break
+
                 data  = _read_exact(self._sock, rem) if rem else b""
+                # lê exatamente rem bytes
+
                 if data is None:
                     break
-                if ptype == 3:
+
+                if ptype == 3:               
+                #PUBLISH — chegou uma mensagem
+
                     qos  = (flags >> 1) & 0x03
-                    tlen = (data[0] << 8) | data[1]
-                    top  = data[2:2 + tlen].decode()
+                    tlen = (data[0] << 8) | data[1]    #tamanho do tópico
+                    top  = data[2:2 + tlen].decode()   #nome do tópico
                     off  = 2 + tlen
+
                     if qos > 0:
                         mid = (data[off] << 8) | data[off + 1]
                         off += 2
                         with self._lock:
                             self._sock.sendall(bytes([0x40, 0x02, mid >> 8, mid & 0xFF]))
+                        #envia PUBACK para confirmar recebimento (QoS 1)
+
                     msg = data[off:]
                     for pat, cbs in self._cbs.items():
-                        if _topic_matches(pat, top):
+                        if _topic_matches(pat, top):    #verifica se o tópico bate com algum padrão assinado
                             for cb in cbs:
                                 try:
-                                    cb(top, msg)
+                                    cb(top, msg)        #chama cada callback registrado para este tópico
                                 except Exception as e:
                                     log.warning(f"Callback erro: {e}")
+                
                 elif ptype == 12:
+                #responde com PINGRESP (0xD0) para manter a conexão viva
                     with self._lock:
                         self._sock.sendall(bytes([0xD0, 0x00]))
             except Exception as e:
@@ -196,21 +258,36 @@ class MQTTClient:
 
 
 class LamportClock:
-    def __init__(self):
-        self._t    = 0
+    def __init__(self): 
+        self._t    = 0       
+        #contador do relógio, começa em zero
+
         self._lock = threading.Lock()
+        #lock para evitar condição de corrida entre threads ao ler/escrever o contador
 
     def tick(self):
+    #Chamado quando o gerenciador envia uma mensagem RA (REQUEST ou RELEASE).
         with self._lock:
             self._t += 1
+            #incrementa o relógio antes de enviar um evento
+
             return self._t
+            #retorna o timestamp atual para ser enviado na mensagem
 
     def update(self, received: int):
+    #Chamado quando o gerenciador recebe uma mensagem RA de outro setor. É a regra 
+    #central do relógio de Lamport: garante a ordenação causal dos eventos entre 
+    #processos distribuídos.
+
         with self._lock:
             self._t = max(self._t, received) + 1
-            return self._t
+            #recebeu um timestamp do peer — atualiza o relógio local para:
+            #o maior entre o valor local e o recebido, mais 1
+            #garante que o evento local seja sempre "depois" do evento recebido
 
-    @property
+            return self._t
+        
+    @property #Usado quando se quer consultar o timestamp sem gerar um novo evento.
     def value(self):
         with self._lock:
             return self._t
@@ -220,26 +297,45 @@ class RicartAgrawala:
 
     def __init__(self, sector_id: int, peer_count: int,
                  clock: LamportClock, send_fn):
-        self.sector_id  = sector_id
-        self.peer_count = peer_count
-        self.clock      = clock
-        self.send_fn    = send_fn
+        
+        self.sector_id  = sector_id          #ID do gerenciador (1, 2, 3 ou 4)
+        self.peer_count = peer_count         #quantos outros gerenciadores existem 
+        self.clock      = clock              #relógio de lamport compartilhado
+        self.send_fn    = send_fn            #função que envia mensagens TCP aos peers
 
-        self._lock       = threading.Lock()
+        self._lock       = threading.Lock()  #protege os dicionários abaixo contra acesso concorrente
         self._requesting = {}
+        #drones que ESTE gerenciador está disputando agora
+        #drone_id → {ts, crit, occ}
+
         self._deferred   = {}
+        #replies que foram adiados para outros setores
+        #drone_id → [lista de sector_ids esperando]
+
         self._replies    = {}
+        #replies já recebidos para cada disputa ativa
+        #drone_id → set de sector_ids que já responderam
+
         self._events     = {}
 
     def request(self, drone_id: str, criticality: int,
                 occurrence_id: str, timeout: float = None) -> bool:
+        
         ts = self.clock.tick()
+        #gera um novo timestamp lamport para este REQUEST, garantindo que 
+        #seja maior do que qualquer evento anterior
 
         with self._lock:
             self._requesting[drone_id] = {"ts": ts, "crit": criticality, "occ": occurrence_id}
+            #registra que este gerenciador está disputando o drone
+            
             self._replies[drone_id]    = set()
+            #prepara o conjunto de replies - começa vazio 
+
             ev = threading.Event()
             self._events[drone_id]     = ev
+            #cria um evento para bloquear esta thread até receber todos 
+            #os replies ou atingir o timeout
 
         self.send_fn({
             "type":          "REQUEST",
@@ -250,16 +346,23 @@ class RicartAgrawala:
             "occurrence_id": occurrence_id,
         })
         log.info(f"RA REQUEST {drone_id} ts={ts} crit={criticality} occ={occurrence_id}")
+        #envia o REQUEST para todos os peers via TCP
 
         if self.peer_count == 0:
             return True
+        #caso especial: sem peers, não precisa esperar ninguém - acesso imediato
 
         deadline = time.time() + (timeout or REPLY_TIMEOUT)
+        #define o prazo máximo de espera para os replies, 
+        #baseado no tempo atual + timeout configurado
+
         while True:
             with self._lock:
                 n = len(self._replies.get(drone_id, set()))
             if n >= self.peer_count:
                 break
+            #recebeu o reply de todos os peers, pode prosseguir
+
             if time.time() > deadline:
                 with self._lock:
                     n = len(self._replies.get(drone_id, set()))
@@ -268,32 +371,43 @@ class RicartAgrawala:
                     "assumindo peers falhos como OK"
                 )
                 break
+            #esgotou o prazo, assume que peers sileciosos falharam 
+            #e avança mesmo assim 
+
             time.sleep(0.05)
+            #aguarda 50ms antes de verificar novamente 
 
         log.info(f"RA ADQUIRIDO {drone_id}")
         return True
+        #recurso adquirido - pode despachar o drone 
 
     def handle_request(self, msg: dict):
-        sender   = msg["sector_id"]
-        drone_id = msg["drone_id"]
-        req_ts   = msg["timestamp"]
-        req_crit = msg["criticality"]
+        sender   = msg["sector_id"]        #quem enviou o REQUEST
+        drone_id = msg["drone_id"]         #qual drone está sendo disputado
+        req_ts   = msg["timestamp"]        #timestamp lamport do REQUEST recebido
+        req_crit = msg["criticality"]      #criticidade da ocorrência do solicitante
 
         self.clock.update(req_ts)
+        #atualiza o relógio local com o timestamp recebido (regra de lamport)
 
         with self._lock:
             our = self._requesting.get(drone_id)
+            #verifica se este gerenciado também está disputando o mesmo drone
             defer = False
+            
 
             if our:
                 our_ts, our_crit = our["ts"], our["crit"]
 
                 if our_crit > req_crit:
+                #nossa criticidade é maior → temos prioridade → adiamos o reply
                     defer = True
                 elif our_crit == req_crit and our_ts < req_ts:
                     defer = True
+                #mesma criticidade, mas nosso timestamp é menor (pedimos antes) → adiamos
                 elif our_crit == req_crit and our_ts == req_ts and self.sector_id < sender:
                     defer = True
+                #tudo igual — desempata pelo ID do setor: menor ID tem prioridade → adiamos
 
             if defer:
                 if drone_id not in self._deferred:
@@ -301,35 +415,44 @@ class RicartAgrawala:
                 if sender not in self._deferred[drone_id]:
                     self._deferred[drone_id].append(sender)
                 log.debug(f"RA DEFER reply para setor {sender} ({drone_id})")
+                #guarda o setor que pediu para responder depois
             else:
                 self._send_reply(drone_id, sender)
+                #não estamos disputando ou o peer tem prioridade
 
     def handle_reply(self, msg: dict):
         drone_id    = msg["drone_id"]
-        from_sector = msg["from_sector"]
+        from_sector = msg["from_sector"]     # quem enviou este REPLY
         to_sector   = msg.get("to_sector")
 
         if to_sector is not None and to_sector != self.sector_id:
             return
+        #ignora se o reply não é para este gerenciador
 
         with self._lock:
             if drone_id in self._replies:
                 self._replies[drone_id].add(from_sector)
+                #registra que este peer já concordou
+
                 if len(self._replies[drone_id]) >= self.peer_count:
                     if drone_id in self._events:
                         self._events[drone_id].set()
+                #se todos os peers responderam, sinaliza o evento
+                #isso desbloqueia a thread que está esperando em request()
 
         log.debug(f"RA REPLY de setor {from_sector} para {drone_id}")
 
     def release(self, drone_id: str):
         with self._lock:
-            self._requesting.pop(drone_id, None)
-            self._replies.pop(drone_id, None)
-            self._events.pop(drone_id, None)
+            self._requesting.pop(drone_id, None)          #remove da lista de disputas ativas
+            self._replies.pop(drone_id, None)             #limpa os replies recebidos
+            self._events.pop(drone_id, None)              #remove o evento de sincronização
             deferred = self._deferred.pop(drone_id, [])
+            #recupera a lista de setores que estavam aguardando nosso reply
 
         for sector in deferred:
             self._send_reply(drone_id, sector)
+        #agora que liberamos o recurso, enviamos os replies que haviamos adiado
 
         self.send_fn({
             "type":      "RELEASE",
@@ -337,15 +460,16 @@ class RicartAgrawala:
             "sector_id": self.sector_id,
         })
         log.info(f"RA RELEASE {drone_id} ({len(deferred)} replies adiados enviados)")
+        #avisa todos os peers que liberamos o drone
 
     def _send_reply(self, drone_id: str, target_sector: int):
         self.send_fn({
             "type":        "REPLY",
             "drone_id":    drone_id,
-            "from_sector": self.sector_id,
-            "to_sector":   target_sector,
+            "from_sector": self.sector_id,    #quem está respondendo
+            "to_sector":   target_sector,     #para quem vai o reply
         })
-
+        #monta e envia o pacote reply via TCP para o setor solicitante
 
 class SectorManager:
 

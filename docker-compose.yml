@@ -1,7 +1,7 @@
 # Execução distribuída — rodar apenas os serviços indicados em cada máquina:
 #
 #   ladica02  (172.16.201.2):  docker compose up broker_1 sector_manager_1 drone_a drone_b radar_1 buoy_1
-#   ladica03  (172.16.201.3):  docker compose up broker_2 sector_manager_2 drone_c drone_d radar_2 buoy_2
+#   ladica01  (172.16.201.1):  docker compose up broker_2 sector_manager_2 drone_c drone_d radar_2 buoy_2
 #   ladica10  (172.16.201.10): docker compose up broker_3 sector_manager_3 drone_e drone_f radar_3 buoy_3 radar_4 buoy_4
 #   ladica11  (172.16.201.11): docker compose up broker_4
 #   ladica12  (172.16.201.12): docker compose up sector_manager_4
@@ -77,9 +77,9 @@ services:
       LOCAL_BROKER:  "172.16.201.2"
       BROKER_PORT:   "3001"
       RA_PORT:       "5001"
-      PEERS:         "172.16.201.3:5001,172.16.201.10:5001,172.16.201.12:5001"
-      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.3:3002,drone_d:172.16.201.3:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
-      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.3:3002,172.16.201.10:3003,172.16.201.11:3004"
+      PEERS:         "172.16.201.1:5001,172.16.201.10:5001,172.16.201.12:5001"
+      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.1:3002,drone_d:172.16.201.1:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
+      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.1:3002,172.16.201.10:3003,172.16.201.11:3004"
       REPLY_TIMEOUT: "6.0"
       MISSION_MIN:   "20"
       MISSION_MAX:   "60"
@@ -95,12 +95,12 @@ services:
       - "5001:5001"
     environment:
       SECTOR_ID:     "2"
-      LOCAL_BROKER:  "172.16.201.3"
+      LOCAL_BROKER:  "172.16.201.1"
       BROKER_PORT:   "3002"
       RA_PORT:       "5001"
       PEERS:         "172.16.201.2:5001,172.16.201.10:5001,172.16.201.12:5001"
-      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.3:3002,drone_d:172.16.201.3:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
-      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.3:3002,172.16.201.10:3003,172.16.201.11:3004"
+      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.1:3002,drone_d:172.16.201.1:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
+      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.1:3002,172.16.201.10:3003,172.16.201.11:3004"
       REPLY_TIMEOUT: "6.0"
       MISSION_MIN:   "20"
       MISSION_MAX:   "60"
@@ -119,9 +119,9 @@ services:
       LOCAL_BROKER:  "172.16.201.10"
       BROKER_PORT:   "3003"
       RA_PORT:       "5001"
-      PEERS:         "172.16.201.2:5001,172.16.201.3:5001,172.16.201.12:5001"
-      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.3:3002,drone_d:172.16.201.3:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
-      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.3:3002,172.16.201.10:3003,172.16.201.11:3004"
+      PEERS:         "172.16.201.2:5001,172.16.201.1:5001,172.16.201.12:5001"
+      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.1:3002,drone_d:172.16.201.1:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
+      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.1:3002,172.16.201.10:3003,172.16.201.11:3004"
       REPLY_TIMEOUT: "6.0"
       MISSION_MIN:   "20"
       MISSION_MAX:   "60"
@@ -140,9 +140,9 @@ services:
       LOCAL_BROKER:  "172.16.201.11"
       BROKER_PORT:   "3004"
       RA_PORT:       "5001"
-      PEERS:         "172.16.201.2:5001,172.16.201.3:5001,172.16.201.10:5001"
-      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.3:3002,drone_d:172.16.201.3:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
-      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.3:3002,172.16.201.10:3003,172.16.201.11:3004"
+      PEERS:         "172.16.201.2:5001,172.16.201.1:5001,172.16.201.10:5001"
+      DRONES:        "drone_a:172.16.201.2:3001,drone_b:172.16.201.2:3001,drone_c:172.16.201.1:3002,drone_d:172.16.201.1:3002,drone_e:172.16.201.10:3003,drone_f:172.16.201.10:3003,drone_g:172.16.201.11:3004,drone_h:172.16.201.11:3004"
+      ALL_BROKERS:   "172.16.201.2:3001,172.16.201.1:3002,172.16.201.10:3003,172.16.201.11:3004"
       REPLY_TIMEOUT: "6.0"
       MISSION_MIN:   "20"
       MISSION_MAX:   "60"
@@ -182,7 +182,7 @@ services:
     container_name: drone_c
     environment:
       DRONE_ID:     "drone_c"
-      BROKER_HOST:  "172.16.201.3"
+      BROKER_HOST:  "172.16.201.1"
       BROKER_PORT:  "3002"
       FAILURE_PROB: "0.08"
     restart: unless-stopped
@@ -193,7 +193,7 @@ services:
     container_name: drone_d
     environment:
       DRONE_ID:     "drone_d"
-      BROKER_HOST:  "172.16.201.3"
+      BROKER_HOST:  "172.16.201.1"
       BROKER_PORT:  "3002"
       FAILURE_PROB: "0.08"
     restart: unless-stopped
@@ -273,7 +273,7 @@ services:
     image: yasmincsme/iot-estreito-radar:latest
     container_name: radar_setor_2
     environment:
-      BROKER_HOST: "172.16.201.3"
+      BROKER_HOST: "172.16.201.1"
       BROKER_PORT: "3002"
       SECTOR_ID:   "2"
       INTERVAL:    "4"
@@ -284,7 +284,7 @@ services:
     image: yasmincsme/iot-estreito-buoy:latest
     container_name: buoy_setor_2
     environment:
-      BROKER_HOST: "172.16.201.3"
+      BROKER_HOST: "172.16.201.1"
       BROKER_PORT: "3002"
       SECTOR_ID:   "2"
       INTERVAL:    "6"
@@ -344,7 +344,7 @@ services:
     environment:
       BROKER_1_HOST: "172.16.201.2"
       BROKER_1_PORT: "3001"
-      BROKER_2_HOST: "172.16.201.3"
+      BROKER_2_HOST: "172.16.201.1"
       BROKER_2_PORT: "3002"
       BROKER_3_HOST: "172.16.201.10"
       BROKER_3_PORT: "3003"
