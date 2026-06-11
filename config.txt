@@ -1,8 +1,8 @@
-(maquina 02) docker compose up broker_1 sector_manager_1 drone_a drone_b radar_1 buoy_1
+(maquina 02) docker compose up broker_1 sector_manager_1 drone_a drone_b 
 
-(maquina 03) docker compose up broker_2 sector_manager_2 drone_c drone_d radar_2 buoy_2
+(maquina 03) docker compose up broker_2 sector_manager_2 drone_c drone_d 
 
-(maquina 10) docker compose up broker_3 sector_manager_3 drone_e drone_f radar_3 buoy_3 radar_4 buoy_4
+(maquina 10) docker compose up broker_3 sector_manager_3 drone_e drone_f 
 
 (maquina 11) docker compose up broker_4
 
@@ -12,3 +12,15 @@
 
 (maquina 16) docker compose run --rm -it monitor
 
+
+
+
+
+
+docker compose up --build broker_1 broker_2 broker_3 broker_4 \
+  sector_manager_1 sector_manager_2 sector_manager_3 sector_manager_4 \
+  drone_a drone_b drone_c drone_d drone_e drone_f drone_g drone_h
+
+docker compose run --rm -it client
+
+docker compose run --rm -it monitor
