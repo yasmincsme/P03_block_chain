@@ -261,3 +261,18 @@ services:
     stdin_open: true
     tty: true
     restart: "no"
+
+  # ===========================================================================
+  # CLIENTE — terminal interativo para solicitar despacho de drones
+  # ===========================================================================
+
+  client:
+    build: ./client
+    container_name: client
+    environment:
+      BROKER_HOST: "172.16.201.2"
+      BROKER_PORT: "3001"
+      CLIENT_ID:   "client_terminal"
+    stdin_open: true
+    tty: true
+    restart: "no"

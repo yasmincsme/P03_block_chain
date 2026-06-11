@@ -640,8 +640,29 @@ class SectorManager:
         elif mtype == "RELEASE":
             pass
 
-    
+    def _on_drone_status(self, topic, payload):
+        try:
+            data     = json.loads(payload)
+            parts    = topic.split("/")
+            drone_id = parts[2]
+            status   = data.get("status", "offline")
+            with self.drone_lock:
+                if drone_id in self.drone_status:
+                    self.drone_status[drone_id] = status
+        except Exception as e:
+            log.warning(f"Status de drone inválido: {e}")
 
+    def _on_manual_request(self, topic, payload):
+        try:
+            data     = json.loads(payload)
+            occ_type = data.get("type")
+            if not occ_type or occ_type not in OCCURRENCE_TYPES:
+                log.warning(f"manual_request com tipo desconhecido: '{occ_type}'")
+                return
+            log.info(f"Solicitação de cliente recebida: {occ_type}")
+            self._enqueue_occurrence(occ_type, "solicitacao_cliente")
+        except Exception as e:
+            log.warning(f"manual_request inválido: {e}")
 
     def _enqueue_occurrence(self, occ_type: str, reason: str):
         criticality = OCCURRENCE_TYPES.get(occ_type, 1)
