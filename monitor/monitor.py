@@ -25,10 +25,10 @@ _lock  = threading.Lock()
 _state = {
     "drones": {},
     "sectors": {
-        1: {"online": False, "sensors": {}},
-        2: {"online": False, "sensors": {}},
-        3: {"online": False, "sensors": {}},
-        4: {"online": False, "sensors": {}},
+        1: {"online": False},
+        2: {"online": False},
+        3: {"online": False},
+        4: {"online": False},
     },
     "events": deque(maxlen=10),
 }
@@ -124,9 +124,6 @@ def _on_message(topic, payload):
                 "drone":  data.get("drone_id", "?"),
             })
 
-        elif len(parts) == 5 and parts[3] == "sensors":
-            sn = int(parts[2])
-            _state["sectors"][sn]["sensors"][parts[4]] = data
 
 
 def _mqtt_thread(idx, host, port):
@@ -137,7 +134,6 @@ def _mqtt_thread(idx, host, port):
         "strait/drones/+/status",
         "strait/drones/+/dispatch",
         f"strait/sector/{sector_n}/occurrence",
-        f"strait/sector/{sector_n}/sensors/+",
     ]
 
     while True:
@@ -233,8 +229,7 @@ def _draw(stdscr):
 
         with _lock:
             drones  = dict(_state["drones"])
-            sectors = {k: {"online": v["online"], "sensors": dict(v["sensors"])}
-                       for k, v in _state["sectors"].items()}
+            sectors = {k: {"online": v["online"]} for k, v in _state["sectors"].items()}
             events  = list(_state["events"])
 
         r = 0
@@ -248,12 +243,11 @@ def _draw(stdscr):
 
         put(r, 0, " SETORES", BOLD)
         r += 1
-        sensor_labels = {1: "radar + boia", 2: "radar + boia", 3: "radar + boia", 4: "radar + boia"}
         for sn in (1, 2, 3, 4):
             ok    = sectors[sn]["online"]
             mark  = "*" if ok else "o"
             color = GREEN if ok else RED
-            line  = f"  [S{sn}] {mark} {'ONLINE ' if ok else 'OFFLINE'}  sensores: {sensor_labels[sn]}"
+            line  = f"  [S{sn}] {mark} {'ONLINE ' if ok else 'OFFLINE'}"
             put(r, 0, line, color | BOLD)
             r += 1
         put(r, 0, "-" * w)
@@ -286,7 +280,7 @@ def _draw(stdscr):
         put(r, 0, "-" * w)
         r += 1
 
-        put(r, 0, " ULTIMOS EVENTOS  (occ=ocorrencia detectada  >>>=despachado)", BOLD)
+        put(r, 0, " ULTIMOS EVENTOS  (occ=ocorrencia  >>>=drone despachado)", BOLD)
         r += 1
         for ev in events[:7]:
             ts_s  = datetime.fromtimestamp(ev["ts"]).strftime("%H:%M:%S")
@@ -305,30 +299,6 @@ def _draw(stdscr):
             r += 1
         put(r, 0, "-" * w)
         r += 1
-
-        put(r, 0, " SENSORES (ultima leitura)", BOLD)
-        r += 1
-        sensor_order = [(1, "radar"), (1, "buoy"), (2, "radar"),
-                        (2, "buoy"),  (3, "radar"), (3, "buoy"),
-                        (4, "radar"), (4, "buoy")]
-        for sn, stype in sensor_order:
-            sd = sectors[sn]["sensors"].get(stype)
-            if not sd:
-                continue
-            anomaly = sd.get("anomaly", False)
-            color   = RED if anomaly else 0
-            if stype == "radar":
-                line = (f"  radar_s{sn}: {sd.get('vessel_count','?')} emb."
-                        f"  {sd.get('avg_speed_kn','?')}kn"
-                        f"  {sd.get('bearing_deg','?')}deg")
-            else:
-                line = (f"  buoy_s{sn}:  ondas={sd.get('wave_height_m','?')}m"
-                        f"  corrente={sd.get('current_kn','?')}kn"
-                        f"  temp={sd.get('water_temp_c','?')}C")
-            if anomaly:
-                line += f"  ! {sd.get('alert', '')}"
-            put(r, 0, line[:w - 1], color)
-            r += 1
 
         put(h - 1, 0, "=" * w, CYAN)
         put(h - 1, 0, " [q] sair", CYAN)

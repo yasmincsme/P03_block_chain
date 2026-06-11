@@ -547,14 +547,12 @@ class SectorManager:
             client.subscribe("strait/drones/+/status", self._on_drone_status)
 
         self.local_mqtt.subscribe(
-            f"strait/sector/{self.sector_id}/sensors/+",
-            self._on_sensor_data
+            f"strait/sector/{self.sector_id}/manual_request",
+            self._on_manual_request
         )
 
         time.sleep(2)
         threading.Thread(target=self._connect_ra_peers, daemon=True).start()
-
-        threading.Thread(target=self._occurrence_generator, daemon=True).start()
 
         threading.Thread(target=self._occurrence_dispatcher, daemon=True).start()
 
@@ -642,52 +640,8 @@ class SectorManager:
         elif mtype == "RELEASE":
             pass
 
-    def _on_drone_status(self, topic: str, payload: bytes):
-        try:
-            parts    = topic.split("/")
-            drone_id = parts[2]
-            data     = json.loads(payload)
-            status   = data.get("status", "available")
-            with self.drone_lock:
-                if drone_id in self.drone_status:
-                    prev = self.drone_status[drone_id]
-                    self.drone_status[drone_id] = status
-                    if prev != status:
-                        log.info(f"Drone {drone_id}: {prev} → {status}")
-        except Exception as e:
-            log.warning(f"Erro ao processar status de drone: {e}")
+    
 
-    def _on_sensor_data(self, topic: str, payload: bytes):
-        try:
-            data        = json.loads(payload)
-            sensor_type = topic.split("/")[-1]
-            self._check_sensor_anomaly(sensor_type, data)
-        except Exception:
-            pass
-
-    def _check_sensor_anomaly(self, sensor_type: str, data: dict):
-        thresholds = {"radar": 0.04, "buoy": 0.03}
-        chance = thresholds.get(sensor_type, 0.02)
-
-        if random.random() < chance:
-            occ_candidates = {
-                "radar": ["objeto_nao_identificado", "bloqueio_de_rota", "congestionamento"],
-                "buoy":  ["risco_ambiental", "falha_de_sinalizacao"],
-            }
-            occ_type = random.choice(occ_candidates.get(sensor_type, ["inspecao_urgente"]))
-            self._enqueue_occurrence(occ_type, f"anomalia em sensor {sensor_type}")
-
-    def _occurrence_generator(self):
-        time.sleep(random.uniform(8, 20))
-        while self._running:
-            occ_type = random.choice(list(OCCURRENCE_TYPES.keys()))
-            self._enqueue_occurrence(
-                occ_type,
-                f"detectado pelo monitoramento do setor {self.sector_id}"
-            )
-            wait = random.uniform(OCC_INTERVAL_MIN, OCC_INTERVAL_MAX)
-            log.info(f"Próxima ocorrência em ~{wait:.0f}s")
-            time.sleep(wait)
 
     def _enqueue_occurrence(self, occ_type: str, reason: str):
         criticality = OCCURRENCE_TYPES.get(occ_type, 1)
