@@ -7,10 +7,22 @@ import logging
 import os
 import heapq
 
+try:
+    from web3 import Web3
+    from web3.middleware import geth_poa_middleware
+    _WEB3_OK = True
+except ImportError:
+    _WEB3_OK = False
+
 SECTOR_ID   = int(os.environ.get("SECTOR_ID", "1"))
 LOCAL_BROKER = os.environ.get("LOCAL_BROKER", "localhost")
 BROKER_PORT  = int(os.environ.get("BROKER_PORT", "1883"))
 RA_PORT      = int(os.environ.get("RA_PORT", "5001"))
+
+GETH_URL          = os.environ.get("GETH_URL", "")
+SETOR_WALLET_ADDR = os.environ.get("SETOR_WALLET_ADDR", "")
+SETOR_WALLET_KEY  = os.environ.get("SETOR_WALLET_KEY", "")
+CONTRACT_ADDR     = os.environ.get("CONTRACT_ADDR", "")
 
 PEERS_ENV       = os.environ.get("PEERS", "")
 DRONES_ENV      = os.environ.get("DRONES", "drone_1:localhost:1883")
@@ -471,6 +483,101 @@ class RicartAgrawala:
         })
         #monta e envia o pacote reply via TCP para o setor solicitante
 
+_SECTOR_ABI = [
+    {"name": "recordDispatch",    "type": "function", "stateMutability": "nonpayable", "outputs": [],
+     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
+                {"name": "droneId", "type": "string"}, {"name": "requestId", "type": "string"}]},
+    {"name": "recordRequeue",     "type": "function", "stateMutability": "nonpayable", "outputs": [],
+     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
+                {"name": "reason", "type": "string"}]},
+    {"name": "recordDroneFailed", "type": "function", "stateMutability": "nonpayable", "outputs": [],
+     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
+                {"name": "droneId", "type": "string"}]},
+    {"name": "recordRecall",      "type": "function", "stateMutability": "nonpayable", "outputs": [],
+     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "droneId", "type": "string"},
+                {"name": "occurrenceId", "type": "string"}]},
+]
+
+
+class BlockchainLogger:
+    """Registra eventos operacionais no DroneToken de forma assíncrona (fire-and-forget)."""
+
+    def __init__(self, geth_url: str, wallet_addr: str, wallet_key: str, contract_addr: str):
+        self._enabled  = False
+        self._contract = None
+        self._w3       = None
+        self._addr     = wallet_addr
+        self._key      = (wallet_key if wallet_key.startswith("0x") else "0x" + wallet_key) if wallet_key else ""
+        self._nonce    = None
+        self._queue    = []
+        self._qlock    = threading.Lock()
+
+        if not (_WEB3_OK and geth_url and wallet_addr and wallet_key and contract_addr):
+            log.warning("BlockchainLogger desabilitado — configure GETH_URL/SETOR_WALLET_ADDR/KEY/CONTRACT_ADDR")
+            return
+
+        try:
+            w3 = Web3(Web3.HTTPProvider(geth_url, request_kwargs={"timeout": 10}))
+            w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+            self._w3       = w3
+            self._contract = w3.eth.contract(
+                address=Web3.to_checksum_address(contract_addr),
+                abi=_SECTOR_ABI,
+            )
+            self._enabled = True
+            threading.Thread(target=self._worker, daemon=True).start()
+            log.info(f"BlockchainLogger conectado a {geth_url} | contrato {contract_addr}")
+        except Exception as exc:
+            log.warning(f"BlockchainLogger falhou ao inicializar: {exc}")
+
+    def _worker(self):
+        while True:
+            item = None
+            with self._qlock:
+                if self._queue:
+                    item = self._queue.pop(0)
+            if item:
+                try:
+                    self._send(*item)
+                except Exception as exc:
+                    log.warning(f"Blockchain tx erro: {exc}")
+            else:
+                time.sleep(0.2)
+
+    def _send(self, contract_fn, *args):
+        addr = Web3.to_checksum_address(self._addr)
+        if self._nonce is None:
+            self._nonce = self._w3.eth.get_transaction_count(addr)
+        tx = contract_fn(*args).build_transaction({
+            "from":     addr,
+            "nonce":    self._nonce,
+            "gas":      200_000,
+            "gasPrice": self._w3.eth.gas_price,
+        })
+        signed  = self._w3.eth.account.sign_transaction(tx, self._key)
+        tx_hash = self._w3.eth.send_raw_transaction(signed.rawTransaction)
+        self._nonce += 1
+        log.info(f"Blockchain {contract_fn.fn_name} → {tx_hash.hex()[:18]}...")
+
+    def _enqueue(self, fn, *args):
+        if not self._enabled:
+            return
+        with self._qlock:
+            self._queue.append((fn,) + args)
+
+    def record_dispatch(self, sector: int, occ_id: str, drone_id: str, request_id: str):
+        self._enqueue(self._contract.functions.recordDispatch, sector, occ_id, drone_id, request_id)
+
+    def record_requeue(self, sector: int, occ_id: str, reason: str):
+        self._enqueue(self._contract.functions.recordRequeue, sector, occ_id, reason)
+
+    def record_drone_failed(self, sector: int, occ_id: str, drone_id: str):
+        self._enqueue(self._contract.functions.recordDroneFailed, sector, occ_id, drone_id)
+
+    def record_recall(self, sector: int, drone_id: str, occ_id: str):
+        self._enqueue(self._contract.functions.recordRecall, sector, drone_id, occ_id)
+
+
 class SectorManager:
 
     def __init__(self):
@@ -518,6 +625,10 @@ class SectorManager:
 
         self.ra_conns = {}
         self.ra_lock  = threading.Lock()
+
+        self.blockchain = BlockchainLogger(
+            GETH_URL, SETOR_WALLET_ADDR, SETOR_WALLET_KEY, CONTRACT_ADDR
+        )
 
         self.local_mqtt = MQTTClient(
             LOCAL_BROKER, BROKER_PORT,
@@ -652,19 +763,20 @@ class SectorManager:
         except Exception as e:
             log.warning(f"Status de drone inválido: {e}")
 
-    def _on_manual_request(self, topic, payload):
+    def _on_manual_request(self, _topic, payload):
         try:
-            data     = json.loads(payload)
-            occ_type = data.get("type")
+            data       = json.loads(payload)
+            occ_type   = data.get("type")
+            request_id = data.get("request_id", "")
             if not occ_type or occ_type not in OCCURRENCE_TYPES:
                 log.warning(f"manual_request com tipo desconhecido: '{occ_type}'")
                 return
-            log.info(f"Solicitação de cliente recebida: {occ_type}")
-            self._enqueue_occurrence(occ_type, "solicitacao_cliente")
+            log.info(f"Solicitação de cliente recebida: {occ_type} (req={request_id[:16] if request_id else '-'})")
+            self._enqueue_occurrence(occ_type, "solicitacao_cliente", request_id)
         except Exception as e:
             log.warning(f"manual_request inválido: {e}")
 
-    def _enqueue_occurrence(self, occ_type: str, reason: str):
+    def _enqueue_occurrence(self, occ_type: str, reason: str, request_id: str = ""):
         criticality = OCCURRENCE_TYPES.get(occ_type, 1)
         ts          = self.clock.tick()
 
@@ -678,6 +790,7 @@ class SectorManager:
                 "sector_id":   self.sector_id,
                 "timestamp":   ts,
                 "reason":      reason,
+                "request_id":  request_id,
             }
             heapq.heappush(
                 self.occ_queue,
@@ -749,10 +862,10 @@ class SectorManager:
 
         if not drone_id:
             log.error(f"{occ_id}: FALHA ao adquirir drone após {max_attempts} tentativas")
-            occ_retry = dict(occ)
-            occ_retry["criticality"] = max(1, occ["criticality"] - 1)
+            reason = f"sem-drone-disponivel apos {max_attempts} tentativas"
+            self.blockchain.record_requeue(self.sector_id, occ_id, reason)
             time.sleep(10)
-            self._enqueue_occurrence(occ["type"], f"re-enfileirado: {occ['reason']}")
+            self._enqueue_occurrence(occ["type"], f"re-enfileirado: {occ['reason']}", occ.get("request_id", ""))
             return
 
         self._dispatch_drone(drone_id, occ)
@@ -778,6 +891,9 @@ class SectorManager:
         }
 
         log.info(f"DESPACHANDO {drone_id} → {occ_id} (tipo={occ['type']})")
+        self.blockchain.record_dispatch(
+            self.sector_id, occ_id, drone_id, occ.get("request_id", "")
+        )
 
         broker_addr = self.drone_map.get(drone_id)
         if broker_addr and broker_addr in self.broker_mqtts:
@@ -807,15 +923,19 @@ class SectorManager:
 
             if status == "offline":
                 log.warning(f"{occ_id}: drone {drone_id} FALHOU em missão, realocando")
+                self.blockchain.record_drone_failed(self.sector_id, occ_id, drone_id)
                 with self.missions_lock:
                     self.missions.pop(drone_id, None)
                 self.ra.release(drone_id)
-                self._enqueue_occurrence(occ["type"], f"realocação após falha de {drone_id}")
+                reason = f"realocacao apos falha de {drone_id}"
+                self.blockchain.record_requeue(self.sector_id, occ_id, reason)
+                self._enqueue_occurrence(occ["type"], reason, occ.get("request_id", ""))
                 reallocated = True
                 return
 
         if not reallocated:
             log.info(f"Missão {occ_id} concluída, liberando {drone_id}")
+            self.blockchain.record_recall(self.sector_id, drone_id, occ_id)
 
             with self.drone_lock:
                 if self.drone_status.get(drone_id) == "busy":
