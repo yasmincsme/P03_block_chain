@@ -1,26 +1,50 @@
-(maquina 02) docker compose up broker_1 sector_manager_1 drone_a drone_b 
+# PRÉ-REQUISITO (executar uma única vez antes de tudo):
+# python3 blockchain/geth/genkeys.py
 
-(maquina 03) docker compose up broker_2 sector_manager_2 drone_c drone_d 
+https://github.com/yasmincsme/P03_block_chain.git
 
-(maquina 10) docker compose up broker_3 sector_manager_3 drone_e drone_f 
+cd Documentos && rm -rf P03_block_chain && git clone https://github.com/yasmincsme/P03_block_chain.git && cd P03_block_chain
 
-(maquina 11) docker compose up broker_4
+# ===========================================================================
+# EXECUÇÃO DISTRIBUÍDA (uma máquina por linha)
+# ===========================================================================
 
-(maquina 12) docker compose up sector_manager_4
+(maquina 02) docker compose up broker_1 geth_setor_1 sector_manager_1 drone_a drone_b
 
-(maquina 14) docker compose up drone_g drone_h
+(maquina 03) docker compose up broker_2 geth_setor_2 sector_manager_2 drone_c drone_d
 
-(maquina 16) docker compose run --rm -it monitor
+(maquina 10) docker compose up broker_3 geth_setor_3 sector_manager_3 drone_e drone_f
 
+(maquina 11) docker compose up broker_4 geth_setor_4 sector_manager_4 drone_g drone_h
 
+(maquina 12) docker compose up blockchain_deployer
 
+(maquina 14) docker compose run --rm -it empresa_a
 
+(maquina 16) docker compose run --rm -it empresa_b
 
+(maquina XX) docker compose run --rm -it monitor
 
-docker compose up --build broker_1 broker_2 broker_3 broker_4 \
-  sector_manager_1 sector_manager_2 sector_manager_3 sector_manager_4 \
-  drone_a drone_b drone_c drone_d drone_e drone_f drone_g drone_h
+# ===========================================================================
+# EXECUÇÃO LOCAL (tudo em uma máquina só)
+# ===========================================================================
 
-docker compose run --rm -it client
+# 1. Brokers MQTT
+docker compose up -d broker_1 broker_2 broker_3 broker_4
 
+# 2. Nós Ethereum (aguardar ~30s para sincronizar e começar a minerar)
+docker compose up -d geth_setor_1 geth_setor_2 geth_setor_3 geth_setor_4
+
+# 3. Deploy do contrato DroneToken (executa uma vez e termina)
+docker compose up blockchain_deployer
+
+# 4. Gerenciadores de setor
+docker compose up -d sector_manager_1 sector_manager_2 sector_manager_3 sector_manager_4
+
+# 5. Drones
+docker compose up -d drone_a drone_b drone_c drone_d drone_e drone_f drone_g drone_h
+
+# 6. Clientes e monitor (cada um em um terminal separado)
+docker compose run --rm -it empresa_a
+docker compose run --rm -it empresa_b
 docker compose run --rm -it monitor

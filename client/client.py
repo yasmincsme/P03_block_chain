@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import uuid
+from typing import Optional
 
 BROKER_HOST = os.environ.get("BROKER_HOST", "localhost")
 BROKER_PORT = int(os.environ.get("BROKER_PORT", "3001"))
@@ -248,7 +249,7 @@ class BlockchainClient:
         except Exception:
             return -1
 
-    def request_drone(self, sector: int, occ_type: str, criticality: int) -> str | None:
+    def request_drone(self, sector: int, occ_type: str, criticality: int) -> Optional[str]:
         """Debita tokens e retorna o request_id (tx hash) ou None em caso de falha."""
         if not self.enabled:
             return f"local_{uuid.uuid4().hex[:12]}"

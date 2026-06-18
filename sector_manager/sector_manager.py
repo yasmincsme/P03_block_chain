@@ -656,6 +656,10 @@ class SectorManager:
 
         for client in self.broker_mqtts.values():
             client.subscribe("strait/drones/+/status", self._on_drone_status)
+            client.subscribe(
+                f"strait/sector/{self.sector_id}/manual_request",
+                self._on_manual_request
+            )
 
         self.local_mqtt.subscribe(
             f"strait/sector/{self.sector_id}/manual_request",
