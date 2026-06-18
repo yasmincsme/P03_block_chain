@@ -83,7 +83,14 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
         "gasPrice": gas_price,
     })
     signed  = w3.eth.account.sign_transaction(tx, key)
-    tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+    try:
+        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+    except ValueError as e:
+        if "already known" in str(e):
+            tx_hash = signed.hash
+            print("Transação já no mempool, aguardando confirmação...", end=" ", flush=True)
+        else:
+            raise
 
     print(f"Implantando contrato (tx {tx_hash.hex()})...", end=" ", flush=True)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
