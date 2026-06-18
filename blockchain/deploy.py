@@ -87,7 +87,8 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
         return w3.eth.contract(address=expected, abi=abi)
 
     gas_price = w3.eth.gas_price
-    nonce     = w3.eth.get_transaction_count(deployer, "pending")
+    nonce     = w3.eth.get_transaction_count(deployer, "latest")
+    print(f"  (nonce do deployer: {nonce})", flush=True)
     Contract  = w3.eth.contract(abi=abi, bytecode=bytecode)
 
     tx = Contract.constructor().build_transaction({
@@ -109,7 +110,11 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
 
     print(f"  Implantando contrato (tx {tx_hash.hex()[:20]}...)...", end=" ", flush=True)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
-    addr    = receipt.contractAddress
+    if receipt.status != 1:
+        raise RuntimeError(f"Deploy reverteu (status={receipt.status})")
+    addr = receipt.contractAddress
+    if not addr:
+        raise RuntimeError("contractAddress ausente no receipt — deploy falhou")
     print(f"OK → {addr}")
     return w3.eth.contract(address=addr, abi=abi)
 
@@ -121,12 +126,18 @@ def mint_tokens(w3: Web3, contract, recipient: str, amount: int) -> None:
     key       = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
     recipient = Web3.to_checksum_address(recipient)
 
-    current = contract.functions.balances(recipient).call()
+    current = 0
+    for _ in range(5):
+        try:
+            current = contract.functions.balances(recipient).call()
+            break
+        except Exception:
+            time.sleep(1)
     if current >= amount:
         print(f"  {recipient} já tem {current} tokens — skipping.")
         return
 
-    nonce     = w3.eth.get_transaction_count(deployer, "pending")
+    nonce     = w3.eth.get_transaction_count(deployer, "latest")
     gas_price = w3.eth.gas_price
 
     tx = contract.functions.mint(recipient, amount).build_transaction({
@@ -184,6 +195,7 @@ def main() -> None:
     print(f"  Endereço : {contract.address}")
     print(f"  Chain ID : {w3.eth.chain_id}")
     print(f"  Bloco    : #{w3.eth.block_number}")
+    print(f"\n*** Atualize o .env: CONTRACT_ADDR={contract.address} ***")
 
 
 if __name__ == "__main__":
