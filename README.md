@@ -1,6 +1,6 @@
 <div align="center">
 
-# Sistema de Monitoramento do Estreito Marítimo
+# Sistema de Monitoramento do Estreito Marítimo com Blockchain Integrada
 
 #### Projeto da disciplina TEC 502 - Concorrência e Conectividade
 
