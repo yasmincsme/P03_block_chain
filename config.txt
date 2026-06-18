@@ -48,3 +48,23 @@ docker compose up -d drone_a drone_b drone_c drone_d drone_e drone_f drone_g dro
 docker compose run --rm -it empresa_a
 docker compose run --rm -it empresa_b
 docker compose run --rm -it monitor
+
+# ===========================================================================
+# INSPEÇÃO 
+# ===========================================================================
+
+# Bloco atual
+curl -s -X POST http://localhost:18541 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' | python3 -m json.tool
+
+# Detalhes do bloco mais recente (com transações)
+curl -s -X POST http://localhost:18541 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest", true],"id":1}' | python3 -m json.tool
+
+# Saldo de tokens de uma empresa (lê do contrato)
+# substitua o address pela COMPANY_A_ADDR do seu .env
+curl -s -X POST http://localhost:18541 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x5F7ee80c66C5be55eB0002e1F73c8809B12fC20D","latest"],"id":1}' | python3 -m json.tool

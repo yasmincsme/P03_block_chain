@@ -102,7 +102,7 @@ def print_balances(contract, w3: Web3) -> None:
         with open(env_path) as f:
             for line in f:
                 line = line.strip()
-                if "_ADDR=" in line and not line.startswith("#"):
+                if "_ADDR=" in line and not line.startswith("#") and not line.startswith("CONTRACT_ADDR"):
                     key, val = line.split("=", 1)
                     label = key.replace("_ADDR", "").replace("_", " ").lower()
                     addrs[label] = val.strip()
@@ -115,11 +115,11 @@ def print_balances(contract, w3: Web3) -> None:
         try:
             bal = contract.functions.balances(Web3.to_checksum_address(addr)).call()
             print(f"  {label:<20} {addr}  →  {bal:>6} tokens")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  {label:<20} {addr}  →  erro: {e}")
 
 
-def print_events(contract, from_block: int) -> None:
+def print_events(contract, w3: Web3, from_block: int) -> None:
     print("\n" + "═" * 60)
     print(f"  HISTÓRICO DE EVENTOS (a partir do bloco {from_block})")
     print("═" * 60)
@@ -127,10 +127,15 @@ def print_events(contract, from_block: int) -> None:
     all_events = []
     for name in EVENT_NAMES:
         try:
-            ev_filter = getattr(contract.events, name).create_filter(
-                fromBlock=from_block, toBlock="latest"
-            )
-            for ev in ev_filter.get_all_entries():
+            logs = w3.eth.get_logs({
+                "fromBlock": from_block,
+                "toBlock":   "latest",
+                "address":   contract.address,
+                "topics":    [getattr(contract.events, name).build_filter().topics[0]],
+            })
+            ev_proc = getattr(contract.events, name)
+            for raw in logs:
+                ev = ev_proc().process_log(raw)
                 all_events.append((ev["blockNumber"], ev["transactionIndex"], name, ev["args"]))
         except Exception as exc:
             print(f"  [aviso] {name}: {exc}")
@@ -208,7 +213,7 @@ def main() -> None:
     )
 
     print_balances(contract, w3)
-    print_events(contract, args.from_block)
+    print_events(contract, w3, args.from_block)
 
     print("\n" + "═" * 60)
 
