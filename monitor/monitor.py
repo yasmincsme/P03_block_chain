@@ -52,6 +52,35 @@ _CHAIN_ABI = [
          {"name": "requestId",      "type": "string",  "indexed": False},
          {"name": "ts",             "type": "uint256", "indexed": False},
      ]},
+    {"name": "DroneDispatched", "type": "event", "anonymous": False,
+     "inputs": [
+         {"name": "sector",       "type": "uint8",  "indexed": True},
+         {"name": "occurrenceId", "type": "string", "indexed": False},
+         {"name": "droneId",      "type": "string", "indexed": False},
+         {"name": "requestId",    "type": "string", "indexed": False},
+         {"name": "ts",           "type": "uint256","indexed": False},
+     ]},
+    {"name": "OccurrenceRequeued", "type": "event", "anonymous": False,
+     "inputs": [
+         {"name": "sector",       "type": "uint8",  "indexed": True},
+         {"name": "occurrenceId", "type": "string", "indexed": False},
+         {"name": "reason",       "type": "string", "indexed": False},
+         {"name": "ts",           "type": "uint256","indexed": False},
+     ]},
+    {"name": "DroneFailed", "type": "event", "anonymous": False,
+     "inputs": [
+         {"name": "sector",       "type": "uint8",  "indexed": True},
+         {"name": "occurrenceId", "type": "string", "indexed": False},
+         {"name": "droneId",      "type": "string", "indexed": False},
+         {"name": "ts",           "type": "uint256","indexed": False},
+     ]},
+    {"name": "DroneRecalled", "type": "event", "anonymous": False,
+     "inputs": [
+         {"name": "sector",       "type": "uint8",  "indexed": True},
+         {"name": "droneId",      "type": "string", "indexed": False},
+         {"name": "occurrenceId", "type": "string", "indexed": False},
+         {"name": "ts",           "type": "uint256","indexed": False},
+     ]},
 ]
 
 _lock  = threading.Lock()
@@ -250,11 +279,16 @@ def _blockchain_thread():
         abi=_CHAIN_ABI,
     )
 
-    T_TRANSFER = Web3.keccak(text="Transfer(address,address,uint256)").hex()
-    T_DRONE    = Web3.keccak(
-        text="DroneRequested(address,uint8,string,uint8,uint256,string,uint256)"
-    ).hex()
-    ZERO_ADDR  = "0x" + "0" * 40
+    T = {
+        "Transfer":          Web3.keccak(text="Transfer(address,address,uint256)").hex(),
+        "DroneRequested":    Web3.keccak(text="DroneRequested(address,uint8,string,uint8,uint256,string,uint256)").hex(),
+        "DroneDispatched":   Web3.keccak(text="DroneDispatched(uint8,string,string,string,uint256)").hex(),
+        "OccurrenceRequeued":Web3.keccak(text="OccurrenceRequeued(uint8,string,string,uint256)").hex(),
+        "DroneFailed":       Web3.keccak(text="DroneFailed(uint8,string,string,uint256)").hex(),
+        "DroneRecalled":     Web3.keccak(text="DroneRecalled(uint8,string,string,uint256)").hex(),
+    }
+    T_BY_HASH = {v: k for k, v in T.items()}
+    ZERO_ADDR = "0x" + "0" * 40
 
     last_scanned = 0
 
@@ -285,30 +319,35 @@ def _blockchain_thread():
                         "address":   contract.address,
                     })
                     for raw in sorted(logs, key=lambda x: (x["blockNumber"], x["transactionIndex"])):
-                        t0 = raw["topics"][0].hex() if raw["topics"] else ""
+                        t0       = raw["topics"][0].hex() if raw["topics"] else ""
+                        ev_name  = T_BY_HASH.get(t0)
+                        if not ev_name:
+                            continue
                         try:
-                            if t0 == T_TRANSFER:
-                                ev  = contract.events.Transfer().process_log(raw)
-                                frm = ev["args"]["from"]
-                                to  = ev["args"]["to"]
-                                amt = ev["args"]["amount"]
+                            ev = getattr(contract.events, ev_name)().process_log(raw)
+                            a  = ev["args"]
+                            if ev_name == "Transfer":
+                                frm = a["from"]
                                 if frm == ZERO_ADDR:
-                                    desc = f"MINT +{amt}"
-                                    addr = to
+                                    desc = f"MINT     +{a['amount']} tok → {a['to'][:10]}..."
                                 else:
-                                    desc = f"PAG  -{amt}"
-                                    addr = frm
-                            elif t0 == T_DRONE:
-                                ev   = contract.events.DroneRequested().process_log(raw)
-                                desc = f"REQ  crit={ev['args']['criticality']} -{ev['args']['cost']}"
-                                addr = ev["args"]["requester"]
-                            else:
-                                continue
+                                    desc = f"PAGAMENT -{a['amount']} tok  {frm[:10]}..."
+                            elif ev_name == "DroneRequested":
+                                desc = (f"REQ S{a['sector']} crit={a['criticality']}"
+                                        f" -{a['cost']}tok {a['occurrenceType'][:12]}")
+                            elif ev_name == "DroneDispatched":
+                                desc = f"DESPACHO S{a['sector']} {a['droneId']} → {a['occurrenceId'][:12]}"
+                            elif ev_name == "OccurrenceRequeued":
+                                desc = f"REQUEUE  S{a['sector']} {a['occurrenceId'][:12]} ({a['reason'][:14]})"
+                            elif ev_name == "DroneFailed":
+                                desc = f"FALHA    S{a['sector']} {a['droneId']} occ={a['occurrenceId'][:10]}"
+                            elif ev_name == "DroneRecalled":
+                                desc = f"RETORNO  S{a['sector']} {a['droneId']} occ={a['occurrenceId'][:10]}"
                             with _lock:
                                 _state["chain"]["txs"].appendleft({
                                     "blk":  raw["blockNumber"],
+                                    "ev":   ev_name,
                                     "desc": desc,
-                                    "addr": addr,
                                 })
                         except Exception:
                             pass
@@ -444,9 +483,9 @@ def _draw(stdscr):
         r += 1
 
         if GETH_URL:
-            ok_chain  = chain.get("ok", False)
-            blk_str   = f"#{chain['block']}" if chain.get("block") is not None else "---"
-            conn_str  = "● conectado" if ok_chain else "○ desconectado"
+            ok_chain = chain.get("ok", False)
+            blk_str  = f"#{chain['block']}" if chain.get("block") is not None else "---"
+            conn_str = "● conectado" if ok_chain else "○ desconectado"
             put(r, 0, f" BLOCKCHAIN  bloco {blk_str}  {conn_str}",
                 BOLD | (CYAN if ok_chain else RED))
             r += 1
@@ -455,12 +494,20 @@ def _draw(stdscr):
             bal_b = chain.get("bal_b")
             a_str = f"{bal_a} tok" if bal_a is not None else "---"
             b_str = f"{bal_b} tok" if bal_b is not None else "---"
-            put(r, 0, f"  empresa_a: {a_str:<12}  empresa_b: {b_str}")
+            put(r, 0, f"  saldo  empresa_a: {a_str:<10}  empresa_b: {b_str}")
             r += 1
 
-            for tx in chain_txs[:3]:
-                addr_s = tx["addr"][:10] + "..."
-                put(r, 0, f"  #{tx['blk']}  {tx['desc']:<24}  {addr_s}")
+            EV_COLOR = {
+                "Transfer":           CYAN,
+                "DroneRequested":     YELLOW,
+                "DroneDispatched":    GREEN,
+                "OccurrenceRequeued": YELLOW,
+                "DroneFailed":        RED,
+                "DroneRecalled":      0,
+            }
+            for tx in chain_txs[:5]:
+                color = EV_COLOR.get(tx.get("ev", ""), 0)
+                put(r, 0, f"  #{tx['blk']:<6} {tx['desc']}"[:w - 1], color)
                 r += 1
 
             put(r, 0, "-" * w)
