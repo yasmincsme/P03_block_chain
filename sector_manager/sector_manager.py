@@ -493,16 +493,24 @@ class RicartAgrawala:
 #não a ABI completa, pois o setor não precisa de mint, transfer ou requestDrone
 _SECTOR_ABI = [
     {"name": "recordDispatch",    "type": "function", "stateMutability": "nonpayable", "outputs": [],
-     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
-                {"name": "droneId", "type": "string"}, {"name": "requestId", "type": "string"}]},
+     "inputs": [{"name": "sector", "type": "uint8"}, 
+                {"name": "occurrenceId", "type": "string"},
+                {"name": "droneId", "type": "string"}, 
+                {"name": "requestId", "type": "string"}]},
+
     {"name": "recordRequeue",     "type": "function", "stateMutability": "nonpayable", "outputs": [],
-     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
+     "inputs": [{"name": "sector", "type": "uint8"}, 
+                {"name": "occurrenceId", "type": "string"},
                 {"name": "reason", "type": "string"}]},
+
     {"name": "recordDroneFailed", "type": "function", "stateMutability": "nonpayable", "outputs": [],
-     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
+     "inputs": [{"name": "sector", "type": "uint8"}, 
+                {"name": "occurrenceId", "type": "string"},
                 {"name": "droneId", "type": "string"}]},
+
     {"name": "recordRecall",      "type": "function", "stateMutability": "nonpayable", "outputs": [],
-     "inputs": [{"name": "sector", "type": "uint8"}, {"name": "droneId", "type": "string"},
+     "inputs": [{"name": "sector", "type": "uint8"}, 
+                {"name": "droneId", "type": "string"},
                 {"name": "occurrenceId", "type": "string"}]},
 ]
 
