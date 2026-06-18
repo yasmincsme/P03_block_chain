@@ -394,6 +394,10 @@ services:
       BROKER_4_HOST: "${IP_SETOR_4}"
       BROKER_4_PORT: "3004"
       TERM:          "xterm-256color"
+      GETH_URL:      "http://${IP_SETOR_1}:18541"
+      CONTRACT_ADDR: "${CONTRACT_ADDR}"
+      EMPRESA_A_ADDR: "${EMPRESA_A_ADDR}"
+      EMPRESA_B_ADDR: "${EMPRESA_B_ADDR}"
     stdin_open: true
     tty: true
     restart: "no"

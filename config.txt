@@ -71,3 +71,11 @@ curl -s -X POST http://localhost:18541 \
 curl -s -X POST http://localhost:18541 \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x5F7ee80c66C5be55eB0002e1F73c8809B12fC20D","latest"],"id":1}' | python3 -m json.tool
+
+
+docker compose run --rm \
+  -v "$(pwd)/blockchain/audit.py:/app/audit.py" \
+  -v "$(pwd)/.env:/.env" \
+  blockchain_deployer python3 /app/audit.py \
+  --url http://172.16.103.2:18541 \
+  --contract 0xNOVO_ENDERECO

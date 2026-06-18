@@ -7,6 +7,13 @@ import os
 from collections import deque
 from datetime import datetime
 
+try:
+    from web3 import Web3
+    from web3.middleware import geth_poa_middleware
+    _WEB3 = True
+except ImportError:
+    _WEB3 = False
+
 BROKERS = [
     (os.environ.get("BROKER_1_HOST", "broker_1"), int(os.environ.get("BROKER_1_PORT", "1883"))),
     (os.environ.get("BROKER_2_HOST", "broker_2"), int(os.environ.get("BROKER_2_PORT", "1883"))),
@@ -14,12 +21,38 @@ BROKERS = [
     (os.environ.get("BROKER_4_HOST", "broker_4"), int(os.environ.get("BROKER_4_PORT", "1883"))),
 ]
 
+GETH_URL       = os.environ.get("GETH_URL",       "")
+CONTRACT_ADDR  = os.environ.get("CONTRACT_ADDR",   "")
+EMPRESA_A_ADDR = os.environ.get("EMPRESA_A_ADDR",  "")
+EMPRESA_B_ADDR = os.environ.get("EMPRESA_B_ADDR",  "")
+
 DRONE_HOME = {
     "drone_a": 1, "drone_b": 1,
     "drone_c": 2, "drone_d": 2,
     "drone_e": 3, "drone_f": 3,
     "drone_g": 4, "drone_h": 4,
 }
+
+_CHAIN_ABI = [
+    {"name": "balances", "type": "function", "stateMutability": "view",
+     "outputs": [{"type": "uint256"}], "inputs": [{"name": "", "type": "address"}]},
+    {"name": "Transfer", "type": "event", "anonymous": False,
+     "inputs": [
+         {"name": "from",   "type": "address", "indexed": True},
+         {"name": "to",     "type": "address", "indexed": True},
+         {"name": "amount", "type": "uint256", "indexed": False},
+     ]},
+    {"name": "DroneRequested", "type": "event", "anonymous": False,
+     "inputs": [
+         {"name": "requester",      "type": "address", "indexed": True},
+         {"name": "sector",         "type": "uint8",   "indexed": True},
+         {"name": "occurrenceType", "type": "string",  "indexed": False},
+         {"name": "criticality",    "type": "uint8",   "indexed": False},
+         {"name": "cost",           "type": "uint256", "indexed": False},
+         {"name": "requestId",      "type": "string",  "indexed": False},
+         {"name": "ts",             "type": "uint256", "indexed": False},
+     ]},
+]
 
 _lock  = threading.Lock()
 _state = {
@@ -31,6 +64,13 @@ _state = {
         4: {"online": False},
     },
     "events": deque(maxlen=10),
+    "chain": {
+        "block": None,
+        "bal_a": None,
+        "bal_b": None,
+        "txs":   deque(maxlen=6),
+        "ok":    False,
+    },
 }
 
 
@@ -125,7 +165,6 @@ def _on_message(topic, payload):
             })
 
 
-
 def _mqtt_thread(idx, host, port):
     sector_n  = idx + 1
     client_id = f"monitor_s{sector_n}"
@@ -197,6 +236,93 @@ def _mqtt_thread(idx, host, port):
         time.sleep(5)
 
 
+def _blockchain_thread():
+    if not (_WEB3 and GETH_URL and CONTRACT_ADDR):
+        return
+
+    w3 = Web3(Web3.HTTPProvider(GETH_URL, request_kwargs={"timeout": 5}))
+    w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(CONTRACT_ADDR),
+        abi=_CHAIN_ABI,
+    )
+
+    T_TRANSFER = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+    T_DRONE    = Web3.keccak(
+        text="DroneRequested(address,uint8,string,uint8,uint256,string,uint256)"
+    ).hex()
+    ZERO_ADDR  = "0x" + "0" * 40
+
+    last_scanned = 0
+
+    while True:
+        try:
+            blk = w3.eth.block_number
+
+            bal_a = bal_b = None
+            if EMPRESA_A_ADDR:
+                try:
+                    bal_a = contract.functions.balances(
+                        Web3.to_checksum_address(EMPRESA_A_ADDR)).call()
+                except Exception:
+                    pass
+            if EMPRESA_B_ADDR:
+                try:
+                    bal_b = contract.functions.balances(
+                        Web3.to_checksum_address(EMPRESA_B_ADDR)).call()
+                except Exception:
+                    pass
+
+            from_blk = max(last_scanned + 1, blk - 200) if last_scanned else max(0, blk - 200)
+            if blk >= from_blk:
+                try:
+                    logs = w3.eth.get_logs({
+                        "fromBlock": from_blk,
+                        "toBlock":   blk,
+                        "address":   contract.address,
+                    })
+                    for raw in sorted(logs, key=lambda x: (x["blockNumber"], x["transactionIndex"])):
+                        t0 = raw["topics"][0].hex() if raw["topics"] else ""
+                        try:
+                            if t0 == T_TRANSFER:
+                                ev  = contract.events.Transfer().process_log(raw)
+                                frm = ev["args"]["from"]
+                                to  = ev["args"]["to"]
+                                amt = ev["args"]["amount"]
+                                if frm == ZERO_ADDR:
+                                    desc = f"MINT +{amt}"
+                                    addr = to
+                                else:
+                                    desc = f"PAG  -{amt}"
+                                    addr = frm
+                            elif t0 == T_DRONE:
+                                ev   = contract.events.DroneRequested().process_log(raw)
+                                desc = f"REQ  crit={ev['args']['criticality']} -{ev['args']['cost']}"
+                                addr = ev["args"]["requester"]
+                            else:
+                                continue
+                            with _lock:
+                                _state["chain"]["txs"].appendleft({
+                                    "blk":  raw["blockNumber"],
+                                    "desc": desc,
+                                    "addr": addr,
+                                })
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                last_scanned = blk
+
+            with _lock:
+                _state["chain"].update({"block": blk, "bal_a": bal_a, "bal_b": bal_b, "ok": True})
+
+        except Exception:
+            with _lock:
+                _state["chain"]["ok"] = False
+
+        time.sleep(10)
+
+
 def _draw(stdscr):
     curses.start_color()
     curses.use_default_colors()
@@ -228,9 +354,11 @@ def _draw(stdscr):
         h, w = stdscr.getmaxyx()
 
         with _lock:
-            drones  = dict(_state["drones"])
-            sectors = {k: {"online": v["online"]} for k, v in _state["sectors"].items()}
-            events  = list(_state["events"])
+            drones    = dict(_state["drones"])
+            sectors   = {k: {"online": v["online"]} for k, v in _state["sectors"].items()}
+            events    = list(_state["events"])
+            chain     = {k: v for k, v in _state["chain"].items() if k != "txs"}
+            chain_txs = list(_state["chain"]["txs"])
 
         r = 0
 
@@ -282,7 +410,7 @@ def _draw(stdscr):
 
         put(r, 0, " ULTIMOS EVENTOS  (occ=ocorrencia  >>>=drone despachado)", BOLD)
         r += 1
-        for ev in events[:7]:
+        for ev in events[:5]:
             ts_s  = datetime.fromtimestamp(ev["ts"]).strftime("%H:%M:%S")
             crit  = ev.get("crit", 0)
             occ_t = ev.get("type", "?")[:26]
@@ -300,6 +428,29 @@ def _draw(stdscr):
         put(r, 0, "-" * w)
         r += 1
 
+        if GETH_URL:
+            ok_chain  = chain.get("ok", False)
+            blk_str   = f"#{chain['block']}" if chain.get("block") is not None else "---"
+            conn_str  = "● conectado" if ok_chain else "○ desconectado"
+            put(r, 0, f" BLOCKCHAIN  bloco {blk_str}  {conn_str}",
+                BOLD | (CYAN if ok_chain else RED))
+            r += 1
+
+            bal_a = chain.get("bal_a")
+            bal_b = chain.get("bal_b")
+            a_str = f"{bal_a} tok" if bal_a is not None else "---"
+            b_str = f"{bal_b} tok" if bal_b is not None else "---"
+            put(r, 0, f"  empresa_a: {a_str:<12}  empresa_b: {b_str}")
+            r += 1
+
+            for tx in chain_txs[:3]:
+                addr_s = tx["addr"][:10] + "..."
+                put(r, 0, f"  #{tx['blk']}  {tx['desc']:<24}  {addr_s}")
+                r += 1
+
+            put(r, 0, "-" * w)
+            r += 1
+
         put(h - 1, 0, "=" * w, CYAN)
         put(h - 1, 0, " [q] sair", CYAN)
 
@@ -309,6 +460,9 @@ def _draw(stdscr):
 def main():
     for i, (host, port) in enumerate(BROKERS):
         threading.Thread(target=_mqtt_thread, args=(i, host, port), daemon=True).start()
+
+    if _WEB3 and GETH_URL and CONTRACT_ADDR:
+        threading.Thread(target=_blockchain_thread, daemon=True).start()
 
     time.sleep(1.5)
 
