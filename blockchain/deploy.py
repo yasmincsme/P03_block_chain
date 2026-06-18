@@ -39,7 +39,7 @@ def wait_for_geth(w3: Web3, timeout: int = 180) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if w3.is_connected() and w3.eth.block_number >= 1:
+            if w3.is_connected():
                 print(f"  conectado — bloco #{w3.eth.block_number}", flush=True)
                 return
         except Exception:
