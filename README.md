@@ -589,7 +589,7 @@ P03_block_chain/
 
 ## Equipe
 
-- Yasmin Cordeiro Meira
+- Yasmin Cordeiro 
 
 ---
 
