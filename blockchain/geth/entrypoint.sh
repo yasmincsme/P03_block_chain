@@ -26,7 +26,7 @@ exec geth \
     --networkid "${NETWORK_ID:-1337}" \
     --http --http.addr 0.0.0.0 --http.port "${HTTP_PORT:-8545}" \
     --http.api eth,net,web3,personal,miner,clique \
-    --http.corsdomain "*" \
+    --http.corsdomain "*" --http.vhosts "*" \
     --port "${P2P_PORT:-30303}" \
     --nodekeyhex "$NODE_KEY" \
     --bootnodes "$PEERS" \
