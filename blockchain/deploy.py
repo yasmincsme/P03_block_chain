@@ -68,13 +68,30 @@ def compile_contract() -> tuple[list, str]:
 
 # ─── Deploy ───────────────────────────────────────────────────────────────────
 
+def _deterministic_address(deployer_addr: str) -> str:
+    """Endereço que o contrato terá quando deployer enviar sua primeira tx (nonce=0)."""
+    import rlp as _rlp
+    raw = bytes.fromhex(deployer_addr.lower().replace("0x", ""))
+    return "0x" + Web3.keccak(_rlp.encode([raw, 0])).hex()[-40:]
+
+
 def deploy(w3: Web3, abi: list, bytecode: str) -> object:
-    deployer = Web3.to_checksum_address(DEPLOY_ADDR)
-    key      = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
+    deployer  = Web3.to_checksum_address(DEPLOY_ADDR)
+    key       = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
+    gas_price = w3.eth.gas_price
+
+    # Idempotente: se o contrato já existe no endereço determinístico, reutiliza
+    expected = Web3.to_checksum_address(_deterministic_address(DEPLOY_ADDR))
+    try:
+        code = w3.eth.get_code(expected)
+        if len(code) > 0:
+            print(f"  Contrato já implantado em {expected} — reutilizando.")
+            return w3.eth.contract(address=expected, abi=abi)
+    except Exception:
+        pass
 
     Contract = w3.eth.contract(abi=abi, bytecode=bytecode)
-    nonce    = w3.eth.get_transaction_count(deployer)
-    gas_price = w3.eth.gas_price
+    nonce    = w3.eth.get_transaction_count(deployer, "pending")
 
     tx = Contract.constructor().build_transaction({
         "from":     deployer,
@@ -82,17 +99,18 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
         "gas":      3_000_000,
         "gasPrice": gas_price,
     })
-    signed  = w3.eth.account.sign_transaction(tx, key)
+    signed = w3.eth.account.sign_transaction(tx, key)
     try:
         tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
     except ValueError as e:
-        if "already known" in str(e):
+        err = str(e).lower()
+        if "already known" in err or "nonce too low" in err:
             tx_hash = signed.hash
-            print("Transação já no mempool, aguardando confirmação...", end=" ", flush=True)
+            print("  Transação já no mempool, aguardando confirmação...", end=" ", flush=True)
         else:
             raise
 
-    print(f"Implantando contrato (tx {tx_hash.hex()})...", end=" ", flush=True)
+    print(f"  Implantando contrato (tx {tx_hash.hex()[:20]}...)...", end=" ", flush=True)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
     addr    = receipt.contractAddress
     print(f"OK → {addr}")
@@ -102,11 +120,16 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
 # ─── Mint ─────────────────────────────────────────────────────────────────────
 
 def mint_tokens(w3: Web3, contract, recipient: str, amount: int) -> None:
-    deployer  = Web3.to_checksum_address(DEPLOY_ADDR)
-    key       = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
-    recipient = Web3.to_checksum_address(recipient)
+    deployer     = Web3.to_checksum_address(DEPLOY_ADDR)
+    key          = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
+    recipient    = Web3.to_checksum_address(recipient)
 
-    nonce     = w3.eth.get_transaction_count(deployer)
+    current = contract.functions.balances(recipient).call()
+    if current >= amount:
+        print(f"  {recipient} já tem {current} tokens — skipping.")
+        return
+
+    nonce     = w3.eth.get_transaction_count(deployer, "pending")
     gas_price = w3.eth.gas_price
 
     tx = contract.functions.mint(recipient, amount).build_transaction({
