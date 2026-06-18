@@ -49,6 +49,9 @@ docker compose run --rm -it empresa_a
 docker compose run --rm -it empresa_b
 docker compose run --rm -it monitor
 
+# Limpeza
+docker compose down -v
+
 # ===========================================================================
 # INSPEÇÃO 
 # ===========================================================================
