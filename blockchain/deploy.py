@@ -68,23 +68,25 @@ def compile_contract() -> tuple[list, str]:
 
 # ─── Deploy ───────────────────────────────────────────────────────────────────
 
-def _deterministic_address(deployer_addr: str) -> str:
-    """Endereço que o contrato terá quando deployer enviar sua primeira tx (nonce=0)."""
+def _deterministic_address(deployer_addr: str, nonce: int = 0) -> str:
+    """Endereço determinístico que um contrato terá dado o deployer e o nonce."""
     import rlp as _rlp
     raw = bytes.fromhex(deployer_addr.lower().replace("0x", ""))
-    return "0x" + Web3.keccak(_rlp.encode([raw, 0])).hex()[-40:]
+    return "0x" + Web3.keccak(_rlp.encode([raw, nonce])).hex()[-40:]
 
 
 def deploy(w3: Web3, abi: list, bytecode: str) -> object:
     deployer  = Web3.to_checksum_address(DEPLOY_ADDR)
     key       = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
 
-    # Idempotente: se o contrato já existe no endereço determinístico, reutiliza
-    expected = Web3.to_checksum_address(_deterministic_address(DEPLOY_ADDR))
-    code = w3.eth.get_code(expected)  # falha explicitamente se geth não responde
-    if len(code) > 0:
-        print(f"  Contrato já implantado em {expected} — reutilizando.")
-        return w3.eth.contract(address=expected, abi=abi)
+    # Idempotente: varre nonces 0..9 procurando contrato já implantado
+    for past_nonce in range(10):
+        candidate = Web3.to_checksum_address(_deterministic_address(DEPLOY_ADDR, past_nonce))
+        code = w3.eth.get_code(candidate)
+        print(f"  Verificando nonce={past_nonce} → {candidate} ({len(code)} bytes)", flush=True)
+        if len(code) > 2:
+            print(f"  Contrato já implantado em {candidate} — reutilizando.")
+            return w3.eth.contract(address=candidate, abi=abi)
 
     gas_price = w3.eth.gas_price
     nonce     = w3.eth.get_transaction_count(deployer, "latest")
