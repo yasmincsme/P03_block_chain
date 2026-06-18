@@ -71,10 +71,12 @@ services:
       SEALER_ADDR: "${SEALER_1_ADDR}"
       SEALER_KEY:  "${SEALER_1_KEY}"
       NODE_KEY:    "${SEALER_1_NODE_KEY}"
-      PEERS:       "enode://${ENODE_2}@geth_setor_2:30303,enode://${ENODE_3}@geth_setor_3:30303,enode://${ENODE_4}@geth_setor_4:30303"
+      PEERS:       "enode://${ENODE_2}@${IP_SETOR_2}:30303,enode://${ENODE_3}@${IP_SETOR_3}:30303,enode://${ENODE_4}@${IP_SETOR_4}:30303"
       NETWORK_ID:  "1337"
     ports:
       - "18541:8545"
+      - "30303:30303"
+      - "30303:30303/udp"
     volumes:
       - geth_setor_1_data:/data
     restart: unless-stopped
@@ -86,10 +88,12 @@ services:
       SEALER_ADDR: "${SEALER_2_ADDR}"
       SEALER_KEY:  "${SEALER_2_KEY}"
       NODE_KEY:    "${SEALER_2_NODE_KEY}"
-      PEERS:       "enode://${ENODE_1}@geth_setor_1:30303,enode://${ENODE_3}@geth_setor_3:30303,enode://${ENODE_4}@geth_setor_4:30303"
+      PEERS:       "enode://${ENODE_1}@${IP_SETOR_1}:30303,enode://${ENODE_3}@${IP_SETOR_3}:30303,enode://${ENODE_4}@${IP_SETOR_4}:30303"
       NETWORK_ID:  "1337"
     ports:
       - "18542:8545"
+      - "30303:30303"
+      - "30303:30303/udp"
     volumes:
       - geth_setor_2_data:/data
     restart: unless-stopped
@@ -101,10 +105,12 @@ services:
       SEALER_ADDR: "${SEALER_3_ADDR}"
       SEALER_KEY:  "${SEALER_3_KEY}"
       NODE_KEY:    "${SEALER_3_NODE_KEY}"
-      PEERS:       "enode://${ENODE_1}@geth_setor_1:30303,enode://${ENODE_2}@geth_setor_2:30303,enode://${ENODE_4}@geth_setor_4:30303"
+      PEERS:       "enode://${ENODE_1}@${IP_SETOR_1}:30303,enode://${ENODE_2}@${IP_SETOR_2}:30303,enode://${ENODE_4}@${IP_SETOR_4}:30303"
       NETWORK_ID:  "1337"
     ports:
       - "18543:8545"
+      - "30303:30303"
+      - "30303:30303/udp"
     volumes:
       - geth_setor_3_data:/data
     restart: unless-stopped
@@ -116,10 +122,12 @@ services:
       SEALER_ADDR: "${SEALER_4_ADDR}"
       SEALER_KEY:  "${SEALER_4_KEY}"
       NODE_KEY:    "${SEALER_4_NODE_KEY}"
-      PEERS:       "enode://${ENODE_1}@geth_setor_1:30303,enode://${ENODE_2}@geth_setor_2:30303,enode://${ENODE_3}@geth_setor_3:30303"
+      PEERS:       "enode://${ENODE_1}@${IP_SETOR_1}:30303,enode://${ENODE_2}@${IP_SETOR_2}:30303,enode://${ENODE_3}@${IP_SETOR_3}:30303"
       NETWORK_ID:  "1337"
     ports:
       - "18544:8545"
+      - "30303:30303"
+      - "30303:30303/udp"
     volumes:
       - geth_setor_4_data:/data
     restart: unless-stopped
@@ -132,13 +140,11 @@ services:
     build: ./blockchain
     container_name: blockchain_deployer
     environment:
-      GETH_URL:       "http://geth_setor_1:8545"
+      GETH_URL:       "http://${IP_SETOR_1}:18541"
       DEPLOY_ADDR:    "${DEPLOYER_ADDR}"
       DEPLOY_KEY:     "${DEPLOYER_KEY}"
       COMPANY_A_ADDR: "${EMPRESA_A_ADDR}"
       COMPANY_B_ADDR: "${EMPRESA_B_ADDR}"
-    depends_on:
-      - geth_setor_1
     restart: "no"
 
   # ===========================================================================
@@ -155,9 +161,9 @@ services:
       LOCAL_BROKER:      "broker_setor_1"
       BROKER_PORT:       "3001"
       RA_PORT:           "5001"
-      PEERS:             "setor_2_manager:5001,setor_3_manager:5001,setor_4_manager:5001"
-      DRONES:            "drone_a:broker_setor_1:3001,drone_b:broker_setor_1:3001,drone_c:broker_setor_2:3002,drone_d:broker_setor_2:3002,drone_e:broker_setor_3:3003,drone_f:broker_setor_3:3003,drone_g:broker_setor_4:3004,drone_h:broker_setor_4:3004"
-      ALL_BROKERS:       "broker_setor_1:3001,broker_setor_2:3002,broker_setor_3:3003,broker_setor_4:3004"
+      PEERS:             "${IP_SETOR_2}:5012,${IP_SETOR_3}:5013,${IP_SETOR_4}:5014"
+      DRONES:            "drone_a:broker_setor_1:3001,drone_b:broker_setor_1:3001,drone_c:${IP_SETOR_2}:3002,drone_d:${IP_SETOR_2}:3002,drone_e:${IP_SETOR_3}:3003,drone_f:${IP_SETOR_3}:3003,drone_g:${IP_SETOR_4}:3004,drone_h:${IP_SETOR_4}:3004"
+      ALL_BROKERS:       "broker_setor_1:3001,${IP_SETOR_2}:3002,${IP_SETOR_3}:3003,${IP_SETOR_4}:3004"
       REPLY_TIMEOUT:     "6.0"
       MISSION_MIN:       "20"
       MISSION_MAX:       "60"
@@ -180,9 +186,9 @@ services:
       LOCAL_BROKER:      "broker_setor_2"
       BROKER_PORT:       "3002"
       RA_PORT:           "5001"
-      PEERS:             "setor_1_manager:5001,setor_3_manager:5001,setor_4_manager:5001"
-      DRONES:            "drone_a:broker_setor_1:3001,drone_b:broker_setor_1:3001,drone_c:broker_setor_2:3002,drone_d:broker_setor_2:3002,drone_e:broker_setor_3:3003,drone_f:broker_setor_3:3003,drone_g:broker_setor_4:3004,drone_h:broker_setor_4:3004"
-      ALL_BROKERS:       "broker_setor_1:3001,broker_setor_2:3002,broker_setor_3:3003,broker_setor_4:3004"
+      PEERS:             "${IP_SETOR_1}:5011,${IP_SETOR_3}:5013,${IP_SETOR_4}:5014"
+      DRONES:            "drone_a:${IP_SETOR_1}:3001,drone_b:${IP_SETOR_1}:3001,drone_c:broker_setor_2:3002,drone_d:broker_setor_2:3002,drone_e:${IP_SETOR_3}:3003,drone_f:${IP_SETOR_3}:3003,drone_g:${IP_SETOR_4}:3004,drone_h:${IP_SETOR_4}:3004"
+      ALL_BROKERS:       "${IP_SETOR_1}:3001,broker_setor_2:3002,${IP_SETOR_3}:3003,${IP_SETOR_4}:3004"
       REPLY_TIMEOUT:     "6.0"
       MISSION_MIN:       "20"
       MISSION_MAX:       "60"
@@ -205,9 +211,9 @@ services:
       LOCAL_BROKER:      "broker_setor_3"
       BROKER_PORT:       "3003"
       RA_PORT:           "5001"
-      PEERS:             "setor_1_manager:5001,setor_2_manager:5001,setor_4_manager:5001"
-      DRONES:            "drone_a:broker_setor_1:3001,drone_b:broker_setor_1:3001,drone_c:broker_setor_2:3002,drone_d:broker_setor_2:3002,drone_e:broker_setor_3:3003,drone_f:broker_setor_3:3003,drone_g:broker_setor_4:3004,drone_h:broker_setor_4:3004"
-      ALL_BROKERS:       "broker_setor_1:3001,broker_setor_2:3002,broker_setor_3:3003,broker_setor_4:3004"
+      PEERS:             "${IP_SETOR_1}:5011,${IP_SETOR_2}:5012,${IP_SETOR_4}:5014"
+      DRONES:            "drone_a:${IP_SETOR_1}:3001,drone_b:${IP_SETOR_1}:3001,drone_c:${IP_SETOR_2}:3002,drone_d:${IP_SETOR_2}:3002,drone_e:broker_setor_3:3003,drone_f:broker_setor_3:3003,drone_g:${IP_SETOR_4}:3004,drone_h:${IP_SETOR_4}:3004"
+      ALL_BROKERS:       "${IP_SETOR_1}:3001,${IP_SETOR_2}:3002,broker_setor_3:3003,${IP_SETOR_4}:3004"
       REPLY_TIMEOUT:     "6.0"
       MISSION_MIN:       "20"
       MISSION_MAX:       "60"
@@ -230,9 +236,9 @@ services:
       LOCAL_BROKER:      "broker_setor_4"
       BROKER_PORT:       "3004"
       RA_PORT:           "5001"
-      PEERS:             "setor_1_manager:5001,setor_2_manager:5001,setor_3_manager:5001"
-      DRONES:            "drone_a:broker_setor_1:3001,drone_b:broker_setor_1:3001,drone_c:broker_setor_2:3002,drone_d:broker_setor_2:3002,drone_e:broker_setor_3:3003,drone_f:broker_setor_3:3003,drone_g:broker_setor_4:3004,drone_h:broker_setor_4:3004"
-      ALL_BROKERS:       "broker_setor_1:3001,broker_setor_2:3002,broker_setor_3:3003,broker_setor_4:3004"
+      PEERS:             "${IP_SETOR_1}:5011,${IP_SETOR_2}:5012,${IP_SETOR_3}:5013"
+      DRONES:            "drone_a:${IP_SETOR_1}:3001,drone_b:${IP_SETOR_1}:3001,drone_c:${IP_SETOR_2}:3002,drone_d:${IP_SETOR_2}:3002,drone_e:${IP_SETOR_3}:3003,drone_f:${IP_SETOR_3}:3003,drone_g:broker_setor_4:3004,drone_h:broker_setor_4:3004"
+      ALL_BROKERS:       "${IP_SETOR_1}:3001,${IP_SETOR_2}:3002,${IP_SETOR_3}:3003,broker_setor_4:3004"
       REPLY_TIMEOUT:     "6.0"
       MISSION_MIN:       "20"
       MISSION_MAX:       "60"
@@ -346,32 +352,30 @@ services:
     container_name: empresa_a
     environment:
       CLIENT_ID:     "empresa_a"
-      BROKER_HOST:   "broker_setor_1"
+      BROKER_HOST:   "${IP_SETOR_1}"
       BROKER_PORT:   "3001"
-      GETH_URL:      "http://geth_setor_1:8545"
+      GETH_URL:      "http://${IP_SETOR_1}:18541"
       WALLET_ADDR:   "${EMPRESA_A_ADDR}"
       WALLET_KEY:    "${EMPRESA_A_KEY}"
       CONTRACT_ADDR: "${CONTRACT_ADDR}"
     stdin_open: true
     tty: true
     restart: "no"
-    depends_on: [broker_1, geth_setor_1]
 
   empresa_b:
     build: ./client
     container_name: empresa_b
     environment:
       CLIENT_ID:     "empresa_b"
-      BROKER_HOST:   "broker_setor_2"
+      BROKER_HOST:   "${IP_SETOR_2}"
       BROKER_PORT:   "3002"
-      GETH_URL:      "http://geth_setor_2:8545"
+      GETH_URL:      "http://${IP_SETOR_2}:18542"
       WALLET_ADDR:   "${EMPRESA_B_ADDR}"
       WALLET_KEY:    "${EMPRESA_B_KEY}"
       CONTRACT_ADDR: "${CONTRACT_ADDR}"
     stdin_open: true
     tty: true
     restart: "no"
-    depends_on: [broker_2, geth_setor_2]
 
   # ===========================================================================
   # MONITOR TUI

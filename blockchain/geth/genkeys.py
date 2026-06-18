@@ -125,6 +125,12 @@ def main():
         "",
         f"CONTRACT_ADDR={contract_addr}",
         "",
+        "# IPs das máquinas (execução distribuída)",
+        "IP_SETOR_1=172.16.103.2",
+        "IP_SETOR_2=172.16.103.3",
+        "IP_SETOR_3=172.16.103.10",
+        "IP_SETOR_4=172.16.103.11",
+        "",
     ]
 
     with open(DOT_ENV_PATH, "w") as f:
