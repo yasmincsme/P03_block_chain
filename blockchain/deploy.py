@@ -35,6 +35,10 @@ SOL_PATH = os.path.join(os.path.dirname(__file__), "DroneToken.sol")
 # ─── Aguardar geth estar minerando ───────────────────────────────────────────
 
 def wait_for_geth(w3: Web3, timeout: int = 180) -> None:
+    #este passo compreende a espera pela disponibilidade do nó geth — verifica apenas
+    #is_connected() sem exigir block_number >= 1, porque a rede usa period=0 (blocos
+    #só são criados quando há transações pendentes); aguardar um bloco aqui causaria
+    #deadlock: nenhum bloco existe antes do deploy, e o deploy é a primeira transação
     print(f"Aguardando geth em {GETH_URL}...", flush=True)
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -59,8 +63,14 @@ def compile_contract() -> tuple[list, str]:
         source = f.read()
 
     print("Compilando DroneToken.sol...", end=" ", flush=True)
+    #este passo compreende a compilação com evm_version="paris" — o solc 0.8.20 compila
+    #por padrão para a EVM "shanghai", que usa o opcode PUSH0 (0x5f); o genesis.json da
+    #rede só tem londonBlock: 0 sem shanghaiBlock, portanto a EVM do nó é London e não
+    #reconhece PUSH0 — o contrato reverteria com status=0 imediatamente; "paris" é o
+    #alvo imediatamente anterior ao shanghai e não emite PUSH0, resolvendo o problema
     compiled = compile_source(source, output_values=["abi", "bin"],
-                               solc_version="0.8.20")
+                               solc_version="0.8.20",
+                               evm_version="paris")
     _, iface = next(iter(compiled.items()))
     print("OK")
     return iface["abi"], iface["bin"]
@@ -70,6 +80,10 @@ def compile_contract() -> tuple[list, str]:
 
 def _deterministic_address(deployer_addr: str, nonce: int = 0) -> str:
     """Endereço determinístico que um contrato terá dado o deployer e o nonce."""
+    #este passo compreende o cálculo do endereço de contrato pela fórmula CREATE do EVM:
+    #keccak256(RLP([deployer_address, nonce]))[12:] — o endereço não é aleatório, é
+    #derivado deterministicamente do endereço de quem fez o deploy e do nonce usado na
+    #transação; isso permite que qualquer nó calcule onde o contrato está sem comunicação
     import rlp as _rlp
     raw = bytes.fromhex(deployer_addr.lower().replace("0x", ""))
     return "0x" + Web3.keccak(_rlp.encode([raw, nonce])).hex()[-40:]
@@ -79,7 +93,11 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
     deployer  = Web3.to_checksum_address(DEPLOY_ADDR)
     key       = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
 
-    # Idempotente: varre nonces 0..9 procurando contrato já implantado
+    #este passo compreende a verificação de idempotência — varre os nonces 0 a 9 e
+    #calcula o endereço determinístico para cada um; se encontrar bytecode (len > 2,
+    #pois contratos vazios retornam "0x") reutiliza o contrato já implantado em vez de
+    #fazer um novo deploy; o range de 10 cobre falhas parciais de runs anteriores onde
+    #a tx foi minerada com nonce diferente do esperado
     for past_nonce in range(10):
         candidate = Web3.to_checksum_address(_deterministic_address(DEPLOY_ADDR, past_nonce))
         code = w3.eth.get_code(candidate)
@@ -89,6 +107,10 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
             return w3.eth.contract(address=candidate, abi=abi)
 
     gas_price = w3.eth.gas_price
+    #este passo compreende a leitura do nonce com "latest" em vez de "pending" — "pending"
+    #incluiria transações ainda no mempool de runs anteriores com falha, inflando o nonce
+    #e fazendo o contrato ser implantado num endereço inesperado (nonce=3 em vez de 0);
+    #"latest" considera apenas txs já mineradas em blocos confirmados
     nonce     = w3.eth.get_transaction_count(deployer, "latest")
     print(f"  (nonce do deployer: {nonce})", flush=True)
     Contract  = w3.eth.contract(abi=abi, bytecode=bytecode)
@@ -112,6 +134,10 @@ def deploy(w3: Web3, abi: list, bytecode: str) -> object:
 
     print(f"  Implantando contrato (tx {tx_hash.hex()[:20]}...)...", end=" ", flush=True)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+    #este passo compreende a validação do receipt — status=1 significa sucesso; status=0
+    #significa que o contrato foi minerado mas o construtor reverteu (ex: EVM incompatível,
+    #PUSH0 em London); contractAddress só está presente quando status=1, portanto ambas
+    #as verificações são necessárias para distinguir falha silenciosa de sucesso
     if receipt.status != 1:
         raise RuntimeError(f"Deploy reverteu (status={receipt.status})")
     addr = receipt.contractAddress
@@ -128,6 +154,10 @@ def mint_tokens(w3: Web3, contract, recipient: str, amount: int) -> None:
     key       = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
     recipient = Web3.to_checksum_address(recipient)
 
+    #este passo compreende a verificação de idempotência do mint — consulta o saldo atual
+    #antes de cunhar; se a empresa já tem tokens suficientes (de um run anterior) pula o
+    #mint sem gerar nova transação; o loop de 5 tentativas existe porque o nó pode ainda
+    #estar processando o bloco do deploy quando mint_tokens é chamado logo em seguida
     current = 0
     for _ in range(5):
         try:

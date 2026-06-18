@@ -34,12 +34,20 @@ DOT_ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 
 def gen_account() -> tuple[str, str]:
+    #este passo compreende a geração de um par de chaves ECDSA secp256k1 —
+    #Account.create() usa entropia do sistema operacional para gerar uma chave privada
+    #de 32 bytes; o endereço Ethereum é keccak256(public_key)[12:], derivado
+    #deterministicamente da chave privada; cada chamada gera um par único e irrepetível
     acc = Account.create()
     return acc.address.lower(), acc.key.hex()  # (0x..., 0x...)
 
 
 def enode_pubkey(priv_hex: str) -> str:
     """Retorna 128 chars hex da chave pública P2P (formato enode://)."""
+    #este passo compreende a derivação da chave pública P2P do nó — o geth usa a mesma
+    #chave privada do sealer tanto para assinar blocos Clique quanto para o protocolo
+    #de descoberta de peers (devp2p); o enode:// identifica o nó na rede pelo IP, porta
+    #e pela chave pública (64 bytes = 128 hex chars) sem o prefixo 0x04 de ponto não comprimido
     priv_bytes = bytes.fromhex(priv_hex.replace("0x", ""))
     pub = eth_keys_lib.PrivateKey(priv_bytes).public_key
     return pub.to_hex()[2:]  # remove '0x' — 128 hex chars
@@ -47,6 +55,10 @@ def enode_pubkey(priv_hex: str) -> str:
 
 def contract_address(deployer: str, nonce: int = 0) -> str:
     """Endereço determinístico do contrato (CREATE com nonce=0)."""
+    #este passo compreende o pré-cálculo do endereço do contrato antes mesmo de ele
+    #existir — pela fórmula CREATE do EVM: keccak256(RLP([deployer, nonce]))[-20 bytes];
+    #com nonce=0 (primeira transação do deployer) o endereço é fixo e pode ser escrito
+    #diretamente no .env e distribuído para todos os serviços sem aguardar o deploy
     addr_bytes = bytes.fromhex(deployer.lower().replace("0x", ""))
     encoded    = rlp.encode([addr_bytes, nonce])
     return "0x" + Web3.keccak(encoded).hex()[-40:]
@@ -54,6 +66,11 @@ def contract_address(deployer: str, nonce: int = 0) -> str:
 
 def build_extradata(sealer_addrs: list[str]) -> str:
     """32 zeros + sealers ordenados (sem 0x) + 65 zeros."""
+    #este passo compreende a montagem do campo extraData do genesis.json no formato
+    #exigido pelo Clique PoA: 32 bytes de zeros (vanity), seguidos dos endereços dos
+    #sealers autorizados concatenados em ordem lexicográfica crescente (20 bytes cada),
+    #seguidos de 65 bytes de zeros reservados para a assinatura do primeiro bloco;
+    #qualquer nó que não esteja nesta lista será rejeitado como sealer pela rede
     sealers = sorted(a.lower().replace("0x", "") for a in sealer_addrs)
     return "0x" + "00" * 32 + "".join(sealers) + "00" * 65
 
@@ -75,7 +92,10 @@ def main():
     contract_addr = contract_address(deployer_addr, 0)
     print(f"\n  contrato (deterministico) = {contract_addr}")
 
-    # ── Atualiza genesis.json ─────────────────────────────────────────────────
+    #este passo compreende a atualização do genesis.json com os novos sealers e saldos
+    #iniciais — o extraData embute a lista de sealers autorizados para o Clique validar
+    #quem pode selar blocos; o alloc pré-distribui 1000 ETH (em wei) para cada conta
+    #gerada, garantindo gas suficiente para deploy, mint e logs sem precisar de faucet
     with open(GENESIS_PATH) as f:
         genesis = json.load(f)
 
@@ -94,7 +114,10 @@ def main():
         _, key = accounts[f"sealer_{i}"]
         enodes[i] = enode_pubkey(key)
 
-    # ── Grava .env na raiz do projeto ─────────────────────────────────────────
+    #este passo compreende a geração do arquivo .env com todas as chaves privadas e
+    #endereços — o docker-compose lê este arquivo via ${VAR} e injeta as credenciais
+    #corretas em cada container; o NODE_KEY (sem prefixo 0x) é passado ao geth via
+    #--nodekeyhex para que cada nó use a chave privada do seu sealer como identidade P2P
     lines = [
         "# Gerado por blockchain/geth/genkeys.py",
         "# NUNCA commitar este arquivo em repositórios públicos",

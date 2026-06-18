@@ -24,6 +24,10 @@ BROKER_HOST = os.environ.get("BROKER_HOST", "localhost")
 BROKER_PORT = int(os.environ.get("BROKER_PORT", "3001"))
 CLIENT_ID   = os.environ.get("CLIENT_ID",   "empresa_a")
 
+#este passo compreende a leitura das credenciais da empresa via variáveis de ambiente:
+#GETH_URL aponta para um nó geth da rede (qualquer sealer serve, pois todos compartilham
+#o mesmo estado); WALLET_ADDR e WALLET_KEY são a carteira da empresa que paga os tokens;
+#CONTRACT_ADDR é o endereço do DroneToken — o mesmo para todos os participantes da rede
 GETH_URL      = os.environ.get("GETH_URL",      "http://geth_setor_1:8545")
 WALLET_ADDR   = os.environ.get("WALLET_ADDR",   "")
 WALLET_KEY    = os.environ.get("WALLET_KEY",    "")
@@ -42,6 +46,11 @@ OCCURRENCE_TYPES = [
 
 TOKEN_COST = {4: 40, 3: 30, 2: 20, 1: 10}
 
+#este passo compreende a definição da ABI parcial do cliente — inclui apenas as 3
+#funções que a empresa precisa: balances (consulta saldo, view sem gas), requestDrone
+#(débito de tokens em troca do serviço) e transfer (repasse de tokens entre empresas);
+#funções de log operacional (recordDispatch, recordRecall etc.) não estão aqui pois
+#são responsabilidade exclusiva do sector_manager
 _CLIENT_ABI = [
     {"name": "balances",     "type": "function", "stateMutability": "view",
      "outputs": [{"type": "uint256"}],
@@ -205,6 +214,11 @@ class BlockchainClient:
             print("\n  [blockchain] Sem configuração — modo MQTT puro (sem cobrança de tokens).")
             return
 
+        #este passo compreende a importação lazy do web3, a conexão ao nó geth e a
+        #injeção do middleware PoA — a importação ocorre dentro do __init__ para que o
+        #cliente funcione em modo MQTT puro se a biblioteca não estiver instalada;
+        #o geth_poa_middleware é obrigatório pelo mesmo motivo do sector_manager: o
+        #Clique adiciona 65 bytes extras no extraData do bloco que o web3 vanilla rejeita
         try:
             from web3 import Web3
             from web3.middleware import geth_poa_middleware
@@ -226,6 +240,10 @@ class BlockchainClient:
             print(f"\n  [blockchain] Falha ao conectar: {exc}")
 
     def wait_for_geth(self, timeout: int = 120) -> bool:
+        #este passo compreende a espera pela cadeia estar operacional antes de qualquer
+        #interação — diferente do deployer (que só exige is_connected), o cliente verifica
+        #block_number >= 1 para garantir que o deploy e o mint já ocorreram; sem ao menos
+        #um bloco confirmado o contrato ainda não existe na chain e balances() falharia
         if not self.enabled:
             return False
         print("  Aguardando geth...", end=" ", flush=True)
@@ -242,6 +260,9 @@ class BlockchainClient:
         return False
 
     def balance(self) -> int:
+        #este passo compreende a consulta de saldo como chamada view — balances() é uma
+        #função read-only (stateMutability: view) que não gera transação nem consome gas;
+        #o web3 executa localmente no nó via eth_call sem submeter nada à blockchain
         if not self.enabled:
             return -1
         try:
@@ -251,6 +272,12 @@ class BlockchainClient:
 
     def request_drone(self, sector: int, occ_type: str, criticality: int) -> Optional[str]:
         """Debita tokens e retorna o request_id (tx hash) ou None em caso de falha."""
+        #este passo compreende o pagamento atômico pelo serviço de drone — requestDrone()
+        #debita tokens do saldo da empresa no contrato e emite o evento DroneRequested;
+        #o request_id (UUID gerado localmente) é gravado on-chain junto com a transação
+        #e depois enviado via MQTT ao sector_manager, criando o vínculo auditável entre
+        #pagamento (blockchain) e execução (MQTT); se a transação reverter (saldo insuficiente,
+        #gás, etc.) o método retorna None e nenhuma mensagem MQTT é enviada
         if not self.enabled:
             return f"local_{uuid.uuid4().hex[:12]}"
 
@@ -268,7 +295,15 @@ class BlockchainClient:
                 "gasPrice": self._w3.eth.gas_price,
             })
             signed  = self._w3.eth.account.sign_transaction(tx, self._key)
-            tx_hash = self._w3.eth.send_raw_transaction(signed.rawTransaction)
+            try:
+                tx_hash = self._w3.eth.send_raw_transaction(signed.rawTransaction)
+            except ValueError as e:
+                err = str(e).lower()
+                if "already known" in err or "replacement transaction underpriced" in err or "nonce too low" in err:
+                    tx_hash = signed.hash
+                    print("  (tx já no mempool, aguardando confirmação)", flush=True)
+                else:
+                    raise
             self._nonce += 1
             print(f"  [blockchain] tx: {tx_hash.hex()[:22]}...", flush=True)
             print("  Aguardando confirmação...", end=" ", flush=True)
@@ -281,6 +316,11 @@ class BlockchainClient:
             return None
 
     def transfer(self, to_addr: str, amount: int) -> bool:
+        #este passo compreende a transferência direta de tokens entre carteiras de empresas
+        #— chama transfer() no contrato que move tokens do saldo de quem assina para o
+        #endereço destino; útil para recarregar saldo de uma empresa a partir de outra
+        #sem passar pelo deployer; usa o mesmo nonce em memória de request_drone para
+        #evitar conflito entre transações consecutivas na mesma sessão
         if not self.enabled:
             print("  [blockchain] Transferência indisponível sem conexão.")
             return False
@@ -390,12 +430,20 @@ def main():
             continue
 
         print(f"\n  Solicitando '{occ_type}' no setor {sector} (custo={cost} tokens)...")
+        #este passo compreende a primeira metade do fluxo de solicitação — a transação
+        #blockchain que debita os tokens e ancora o pedido on-chain; só avança para o
+        #MQTT se a transação for confirmada (request_id não nulo), garantindo que nenhum
+        #drone seja despachado sem o pagamento ter sido efetivado na cadeia
         request_id = bc.request_drone(sector, occ_type, criticality)
 
         if request_id is None:
             print("  Transacao falhou — solicitacao cancelada.\n")
             continue
 
+        #este passo compreende a segunda metade do fluxo — a publicação MQTT que aciona
+        #o sector_manager; o request_id (tx hash ou UUID local) viaja no payload para que
+        #o sector_manager o grave em cada evento on-chain subsequente (dispatch, recall),
+        #fechando a rastreabilidade completa: pagamento → despacho → conclusão
         payload = json.dumps({
             "type":        occ_type,
             "criticality": criticality,

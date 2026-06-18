@@ -25,6 +25,10 @@ except ImportError:
 DEFAULT_URL      = os.environ.get("GETH_URL",      "http://localhost:18541")
 CONTRACT_ADDR    = os.environ.get("CONTRACT_ADDR",  "")
 
+#este passo compreende a definição da ABI completa de auditoria — ao contrário das ABIs
+#parciais do client e do sector_manager, aqui são necessárias todas as assinaturas de
+#eventos para decodificar os logs armazenados nos blocos; sem a assinatura correta o
+#web3 não consegue calcular o topic0 (keccak do nome+tipos) nem decodificar os argumentos
 FULL_ABI = [
     {"name": "balances", "type": "function", "stateMutability": "view",
      "outputs": [{"type": "uint256"}],
@@ -95,7 +99,10 @@ def print_balances(contract, w3: Web3) -> None:
     print("  SALDOS DE TOKENS")
     print("═" * 60)
 
-    # Lê as contas conhecidas do .env se disponível
+    #este passo compreende a descoberta das contas conhecidas via .env — a blockchain
+    #armazena apenas endereços (hashes), sem nomes; ler o .env permite exibir rótulos
+    #legíveis (empresa_a, sealer_1 etc.) em vez de endereços brutos; balances() é uma
+    #chamada view sem gas, executada localmente no nó via eth_call
     env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
     addrs: dict[str, str] = {}
     if os.path.exists(env_path):
@@ -124,6 +131,11 @@ def print_events(contract, w3: Web3, from_block: int) -> None:
     print(f"  HISTÓRICO DE EVENTOS (a partir do bloco {from_block})")
     print("═" * 60)
 
+    #este passo compreende a coleta de eventos via eth_getLogs — para cada tipo de evento
+    #calcula o topic0 (keccak256 da assinatura do evento) e consulta todos os logs do
+    #contrato que correspondem a esse topic; os logs ficam gravados permanentemente nos
+    #blocos e podem ser consultados por qualquer nó sem permissão especial; ao final ordena
+    #por (blockNumber, transactionIndex) para garantir ordem cronológica exata de execução
     all_events = []
     for name in EVENT_NAMES:
         try:
@@ -198,6 +210,10 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Conectando a {args.url}...")
+    #este passo compreende a conexão ao nó e a injeção do middleware PoA — qualquer nó
+    #geth da rede serve para auditoria (acesso é somente leitura); o geth_poa_middleware
+    #é obrigatório pelo mesmo motivo dos outros serviços: o Clique adiciona 65 bytes
+    #extras no extraData do cabeçalho que o web3 vanilla trata como bloco malformado
     w3 = Web3(Web3.HTTPProvider(args.url, request_kwargs={"timeout": 15}))
     w3.middleware_onion.inject(geth_poa_middleware, layer=0)
 

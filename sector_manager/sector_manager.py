@@ -19,6 +19,10 @@ LOCAL_BROKER = os.environ.get("LOCAL_BROKER", "localhost")
 BROKER_PORT  = int(os.environ.get("BROKER_PORT", "1883"))
 RA_PORT      = int(os.environ.get("RA_PORT", "5001"))
 
+#este passo compreende a leitura das credenciais da blockchain via variáveis de ambiente:
+#GETH_URL aponta para o nó geth local do setor; SETOR_WALLET_ADDR e SETOR_WALLET_KEY são
+#a carteira do sealer que assina as transações de log; CONTRACT_ADDR é o endereço do
+#DroneToken implantado — todos injetados pelo docker-compose para cada instância de setor
 GETH_URL          = os.environ.get("GETH_URL", "")
 SETOR_WALLET_ADDR = os.environ.get("SETOR_WALLET_ADDR", "")
 SETOR_WALLET_KEY  = os.environ.get("SETOR_WALLET_KEY", "")
@@ -483,6 +487,10 @@ class RicartAgrawala:
         })
         #monta e envia o pacote reply via TCP para o setor solicitante
 
+#este passo compreende a definição da ABI (Application Binary Interface) das funções do
+#contrato que o setor usa — sem ela o web3 não sabe como serializar os argumentos em ABI
+#encoding para montar a transação; inclui apenas as 4 funções de log operacional do setor,
+#não a ABI completa, pois o setor não precisa de mint, transfer ou requestDrone
 _SECTOR_ABI = [
     {"name": "recordDispatch",    "type": "function", "stateMutability": "nonpayable", "outputs": [],
      "inputs": [{"name": "sector", "type": "uint8"}, {"name": "occurrenceId", "type": "string"},
@@ -497,7 +505,6 @@ _SECTOR_ABI = [
      "inputs": [{"name": "sector", "type": "uint8"}, {"name": "droneId", "type": "string"},
                 {"name": "occurrenceId", "type": "string"}]},
 ]
-
 
 class BlockchainLogger:
     """Registra eventos operacionais no DroneToken de forma assíncrona (fire-and-forget)."""
@@ -516,6 +523,10 @@ class BlockchainLogger:
             log.warning("BlockchainLogger desabilitado — configure GETH_URL/SETOR_WALLET_ADDR/KEY/CONTRACT_ADDR")
             return
 
+        #este passo compreende a conexão ao nó geth do setor via HTTP e a configuração do
+        #middleware PoA — o geth_poa_middleware é necessário porque o Clique adiciona 65 bytes
+        #extras no campo extraData do cabeçalho de cada bloco; sem o middleware o web3 rejeita
+        #os blocos como malformados; em seguida instancia o objeto contrato com a ABI parcial
         try:
             w3 = Web3(Web3.HTTPProvider(geth_url, request_kwargs={"timeout": 10}))
             w3.middleware_onion.inject(geth_poa_middleware, layer=0)
@@ -531,6 +542,9 @@ class BlockchainLogger:
             log.warning(f"BlockchainLogger falhou ao inicializar: {exc}")
 
     def _worker(self):
+        #este passo compreende a thread assíncrona de envio de transações — ela roda em
+        #background e drena a fila continuamente; o padrão fire-and-forget garante que o
+        #fluxo principal de despacho de drones não bloqueie esperando confirmação de bloco
         while True:
             item = None
             with self._qlock:
@@ -545,6 +559,12 @@ class BlockchainLogger:
                 time.sleep(0.2)
 
     def _send(self, contract_fn, *args):
+        #este passo compreende o gerenciamento de nonce local e a assinatura offline da
+        #transação — o nonce é mantido em memória (_nonce) e incrementado a cada tx enviada,
+        #evitando consultar o nó a cada envio (o que seria lento e introduziria condição de
+        #corrida entre chamadas consecutivas); a chave privada nunca sai do container —
+        #sign_transaction assina localmente e send_raw_transaction envia apenas os bytes
+        #já assinados, sem expor a chave ao nó geth
         addr = Web3.to_checksum_address(self._addr)
         if self._nonce is None:
             self._nonce = self._w3.eth.get_transaction_count(addr)
@@ -565,6 +585,10 @@ class BlockchainLogger:
         with self._qlock:
             self._queue.append((fn,) + args)
 
+    #este passo compreende a API pública do BlockchainLogger — cada método corresponde
+    #a um evento do ciclo de vida de uma ocorrência no DroneToken; o SectorManager chama
+    #esses métodos diretamente e eles retornam imediatamente (fire-and-forget): o trabalho
+    #real de montar e enviar a transação acontece na _worker thread em background
     def record_dispatch(self, sector: int, occ_id: str, drone_id: str, request_id: str):
         self._enqueue(self._contract.functions.recordDispatch, sector, occ_id, drone_id, request_id)
 
@@ -626,6 +650,11 @@ class SectorManager:
         self.ra_conns = {}
         self.ra_lock  = threading.Lock()
 
+        #este passo compreende a instanciação do BlockchainLogger com as credenciais
+        #do setor — cada instância de SectorManager usa a carteira do seu próprio sealer
+        #(SETOR_WALLET_ADDR/KEY injetados pelo docker-compose) para assinar os logs;
+        #se qualquer variável estiver ausente o logger desabilita silenciosamente e o
+        #sistema continua funcionando em modo MQTT puro sem registros na blockchain
         self.blockchain = BlockchainLogger(
             GETH_URL, SETOR_WALLET_ADDR, SETOR_WALLET_KEY, CONTRACT_ADDR
         )
@@ -767,7 +796,13 @@ class SectorManager:
         except Exception as e:
             log.warning(f"Status de drone inválido: {e}")
 
+    ###RECUPERAÇÃO MANUAL PARA TESTES E SIMULAÇÕES###
     def _on_manual_request(self, _topic, payload):
+        #este passo compreende a captura do request_id enviado pela empresa cliente —
+        #o campo request_id identifica unicamente a requisição de serviço da empresa
+        #(gerado no cliente e vinculado ao pagamento de tokens DroneToken); ao propagá-lo
+        #para a ocorrência, todos os eventos on-chain subsequentes (dispatch, requeue,
+        #recall) ficam rastreáveis de volta à transação original da empresa
         try:
             data       = json.loads(payload)
             occ_type   = data.get("type")
@@ -781,6 +816,12 @@ class SectorManager:
             log.warning(f"manual_request inválido: {e}")
 
     def _enqueue_occurrence(self, occ_type: str, reason: str, request_id: str = ""):
+        #este passo compreende a propagação do request_id para dentro do dicionário
+        #da ocorrência — ao incluí-lo no dict occ, ele viaja automaticamente por todas
+        #as etapas seguintes (handle_occurrence → dispatch_drone → record_dispatch) sem
+        #precisar ser repassado explicitamente em cada chamada; o timestamp de Lamport (ts)
+        #também é inserido aqui para garantir ordenação causal entre ocorrências de setores
+        #diferentes ao usar o heap de prioridade
         criticality = OCCURRENCE_TYPES.get(occ_type, 1)
         ts          = self.clock.tick()
 
@@ -867,6 +908,10 @@ class SectorManager:
         if not drone_id:
             log.error(f"{occ_id}: FALHA ao adquirir drone após {max_attempts} tentativas")
             reason = f"sem-drone-disponivel apos {max_attempts} tentativas"
+            #este passo compreende o registro on-chain de re-enfileiramento por falta de
+            #drone — emite o evento OccurrenceRequeued no contrato para que o monitor e
+            #o cliente saibam que a ocorrência não foi atendida agora mas será retentada;
+            #após gravar na blockchain a ocorrência é reinserida na fila de prioridade
             self.blockchain.record_requeue(self.sector_id, occ_id, reason)
             time.sleep(10)
             self._enqueue_occurrence(occ["type"], f"re-enfileirado: {occ['reason']}", occ.get("request_id", ""))
@@ -895,6 +940,10 @@ class SectorManager:
         }
 
         log.info(f"DESPACHANDO {drone_id} → {occ_id} (tipo={occ['type']})")
+        #este passo compreende o primeiro evento blockchain do ciclo de vida da ocorrência —
+        #recordDispatch ancora no contrato: qual setor despachou, qual ocorrência, qual drone
+        #e o request_id da empresa, criando a ligação auditável entre o pagamento de tokens
+        #(requestDrone da empresa) e a execução física do serviço
         self.blockchain.record_dispatch(
             self.sector_id, occ_id, drone_id, occ.get("request_id", "")
         )
@@ -927,6 +976,11 @@ class SectorManager:
 
             if status == "offline":
                 log.warning(f"{occ_id}: drone {drone_id} FALHOU em missão, realocando")
+                #este passo compreende dois eventos blockchain encadeados para falha de drone
+                #— recordDroneFailed emite o evento DroneFailed marcando o drone como falho
+                #nesta missão; em seguida recordRequeue emite OccurrenceRequeued indicando
+                #que a ocorrência precisa de um novo drone; a separação em dois eventos
+                #permite ao monitor distinguir "drone falhou" de "ocorrência pendente"
                 self.blockchain.record_drone_failed(self.sector_id, occ_id, drone_id)
                 with self.missions_lock:
                     self.missions.pop(drone_id, None)
@@ -939,6 +993,10 @@ class SectorManager:
 
         if not reallocated:
             log.info(f"Missão {occ_id} concluída, liberando {drone_id}")
+            #este passo compreende o evento final do ciclo de vida on-chain — recordRecall
+            #emite DroneRecalled fechando a ocorrência no contrato; junto com o recordDispatch
+            #do início, forma o par de eventos que comprova a prestação completa do serviço
+            #e que pode ser auditado por qualquer participante da rede
             self.blockchain.record_recall(self.sector_id, drone_id, occ_id)
 
             with self.drone_lock:
