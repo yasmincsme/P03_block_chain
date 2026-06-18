@@ -23,7 +23,7 @@ cd Documentos && rm -rf P03_block_chain && git clone https://github.com/yasmincs
 
 (maquina 08) docker compose run --rm -it empresa_b
 
-(maquina 13) docker compose run --rm -it monitor
+(maquina 13) docker compose run --rm -it monitor    # usar run, não up
 
 # ===========================================================================
 # EXECUÇÃO LOCAL (tudo em uma máquina só)

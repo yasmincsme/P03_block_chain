@@ -385,13 +385,13 @@ services:
     build: ./monitor
     container_name: monitor
     environment:
-      BROKER_1_HOST: "broker_setor_1"
+      BROKER_1_HOST: "${IP_SETOR_1}"
       BROKER_1_PORT: "3001"
-      BROKER_2_HOST: "broker_setor_2"
+      BROKER_2_HOST: "${IP_SETOR_2}"
       BROKER_2_PORT: "3002"
-      BROKER_3_HOST: "broker_setor_3"
+      BROKER_3_HOST: "${IP_SETOR_3}"
       BROKER_3_PORT: "3003"
-      BROKER_4_HOST: "broker_setor_4"
+      BROKER_4_HOST: "${IP_SETOR_4}"
       BROKER_4_PORT: "3004"
       TERM:          "xterm-256color"
     stdin_open: true
