@@ -58,10 +58,10 @@ _lock  = threading.Lock()
 _state = {
     "drones": {},
     "sectors": {
-        1: {"online": False},
-        2: {"online": False},
-        3: {"online": False},
-        4: {"online": False},
+        1: {"broker": False, "last_msg": 0},
+        2: {"broker": False, "last_msg": 0},
+        3: {"broker": False, "last_msg": 0},
+        4: {"broker": False, "last_msg": 0},
     },
     "events": deque(maxlen=10),
     "chain": {
@@ -125,26 +125,29 @@ def _topic_matches(pattern, topic):
     return pattern == topic or m(pattern.split("/"), topic.split("/"))
 
 
-def _on_message(topic, payload):
+def _on_message(topic, payload, sector_n):
     try:
         data = json.loads(payload)
     except Exception:
         return
 
     parts = topic.split("/")
+    now   = time.time()
 
     with _lock:
+        _state["sectors"][sector_n]["last_msg"] = now
+
         if len(parts) == 4 and parts[1] == "drones" and parts[3] == "status":
             did = parts[2]
             _state["drones"][did] = {
                 "status":  data.get("status", "?"),
                 "mission": data.get("mission"),
-                "ts":      data.get("timestamp", time.time()),
+                "ts":      data.get("timestamp", now),
             }
 
         elif len(parts) == 4 and parts[1] == "sector" and parts[3] == "occurrence":
             _state["events"].appendleft({
-                "ts":     time.time(),
+                "ts":     now,
                 "kind":   "occ",
                 "sector": int(parts[2]),
                 "id":     data.get("id", "?"),
@@ -155,7 +158,7 @@ def _on_message(topic, payload):
 
         elif len(parts) == 4 and parts[1] == "drones" and parts[3] == "dispatch":
             _state["events"].appendleft({
-                "ts":     time.time(),
+                "ts":     now,
                 "kind":   "dispatch",
                 "sector": data.get("sector_id", "?"),
                 "id":     data.get("occurrence_id", "?"),
@@ -190,7 +193,7 @@ def _mqtt_thread(idx, host, port):
                 raise ConnectionError("CONNACK falhou")
 
             with _lock:
-                _state["sectors"][sector_n]["online"] = True
+                _state["sectors"][sector_n]["broker"] = True
 
             for i, topic in enumerate(topics, start=1):
                 tb  = topic.encode()
@@ -219,7 +222,7 @@ def _mqtt_thread(idx, host, port):
                         mid = (data[off] << 8) | data[off + 1]
                         off += 2
                         sock.sendall(bytes([0x40, 0x02, mid >> 8, mid & 0xFF]))
-                    _on_message(top, data[off:])
+                    _on_message(top, data[off:], sector_n)
                 elif ptype == 12:
                     sock.sendall(bytes([0xD0, 0x00]))
 
@@ -227,7 +230,7 @@ def _mqtt_thread(idx, host, port):
             pass
         finally:
             with _lock:
-                _state["sectors"][sector_n]["online"] = False
+                _state["sectors"][sector_n]["broker"] = False
             try:
                 sock.close()
             except Exception:
@@ -353,9 +356,17 @@ def _draw(stdscr):
         stdscr.erase()
         h, w = stdscr.getmaxyx()
 
+        now = time.time()
         with _lock:
             drones    = dict(_state["drones"])
-            sectors   = {k: {"online": v["online"]} for k, v in _state["sectors"].items()}
+            sectors   = {
+                k: {
+                    "broker":   v["broker"],
+                    "active":   v["broker"] and (now - v["last_msg"]) < 60,
+                    "last_msg": v["last_msg"],
+                }
+                for k, v in _state["sectors"].items()
+            }
             events    = list(_state["events"])
             chain     = {k: v for k, v in _state["chain"].items() if k != "txs"}
             chain_txs = list(_state["chain"]["txs"])
@@ -372,11 +383,15 @@ def _draw(stdscr):
         put(r, 0, " SETORES", BOLD)
         r += 1
         for sn in (1, 2, 3, 4):
-            ok    = sectors[sn]["online"]
-            mark  = "*" if ok else "o"
-            color = GREEN if ok else RED
-            line  = f"  [S{sn}] {mark} {'ONLINE ' if ok else 'OFFLINE'}"
-            put(r, 0, line, color | BOLD)
+            broker = sectors[sn]["broker"]
+            active = sectors[sn]["active"]
+            if active:
+                color, mark, label = GREEN,  "*", "ATIVO  "
+            elif broker:
+                color, mark, label = YELLOW, "-", "AGUARD."
+            else:
+                color, mark, label = RED,    "o", "OFFLINE"
+            put(r, 0, f"  [S{sn}] {mark} {label}", color | BOLD)
             r += 1
         put(r, 0, "-" * w)
         r += 1
