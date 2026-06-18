@@ -124,10 +124,13 @@ def mint_tokens(w3: Web3, contract, recipient: str, amount: int) -> None:
     key          = DEPLOY_KEY if DEPLOY_KEY.startswith("0x") else "0x" + DEPLOY_KEY
     recipient    = Web3.to_checksum_address(recipient)
 
-    current = contract.functions.balances(recipient).call()
-    if current >= amount:
-        print(f"  {recipient} já tem {current} tokens — skipping.")
-        return
+    try:
+        current = contract.functions.balances(recipient).call()
+        if current >= amount:
+            print(f"  {recipient} já tem {current} tokens — skipping.")
+            return
+    except Exception:
+        pass  # estado ainda não disponível logo após o deploy — prossegue
 
     nonce     = w3.eth.get_transaction_count(deployer, "pending")
     gas_price = w3.eth.gas_price
