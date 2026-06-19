@@ -35,9 +35,6 @@ DOT_ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 
 def gen_account() -> tuple[str, str]:
     #este passo compreende a geração de um par de chaves ECDSA secp256k1 —
-    #Account.create() usa entropia do sistema operacional para gerar uma chave privada
-    #de 32 bytes; o endereço Ethereum é keccak256(public_key)[12:], derivado
-    #deterministicamente da chave privada; cada chamada gera um par único e irrepetível
     acc = Account.create()
     return acc.address.lower(), acc.key.hex()  # (0x..., 0x...)
 

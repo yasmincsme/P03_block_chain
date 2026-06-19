@@ -214,11 +214,6 @@ class BlockchainClient:
             print("\n  [blockchain] Sem configuração — modo MQTT puro (sem cobrança de tokens).")
             return
 
-        #este passo compreende a importação lazy do web3, a conexão ao nó geth e a
-        #injeção do middleware PoA — a importação ocorre dentro do __init__ para que o
-        #cliente funcione em modo MQTT puro se a biblioteca não estiver instalada;
-        #o geth_poa_middleware é obrigatório pelo mesmo motivo do sector_manager: o
-        #Clique adiciona 65 bytes extras no extraData do bloco que o web3 vanilla rejeita
         try:
             from web3 import Web3
             from web3.middleware import geth_poa_middleware
@@ -270,6 +265,7 @@ class BlockchainClient:
         except Exception:
             return -1
 
+    ####montando e enviando transação
     def request_drone(self, sector: int, occ_type: str, criticality: int) -> Optional[str]:
         """Debita tokens e retorna o request_id (tx hash) ou None em caso de falha."""
         #este passo compreende o pagamento atômico pelo serviço de drone — requestDrone()

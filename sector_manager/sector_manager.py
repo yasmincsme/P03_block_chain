@@ -806,11 +806,6 @@ class SectorManager:
 
     ###RECUPERAÇÃO MANUAL PARA TESTES E SIMULAÇÕES###
     def _on_manual_request(self, _topic, payload):
-        #este passo compreende a captura do request_id enviado pela empresa cliente —
-        #o campo request_id identifica unicamente a requisição de serviço da empresa
-        #(gerado no cliente e vinculado ao pagamento de tokens DroneToken); ao propagá-lo
-        #para a ocorrência, todos os eventos on-chain subsequentes (dispatch, requeue,
-        #recall) ficam rastreáveis de volta à transação original da empresa
         try:
             data       = json.loads(payload)
             occ_type   = data.get("type")
